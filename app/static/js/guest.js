@@ -18,6 +18,7 @@ const resultsList = document.getElementById("results-list");
 
 let guestSessionToken = null;
 let selectedSelfie = null;
+let resultObjectUrls = [];
 
 // Read QR token from URL.
 const url = new URL(window.location.href);
@@ -87,6 +88,7 @@ async function createGuestSession() {
 
         consentPanel.querySelector("h2").textContent =
             `Welcome to ${data.event.name}`;
+        continueButton.disabled = !consentCheckbox.checked;
 
     } catch (error) {
         showMessage(error.message);
@@ -96,7 +98,7 @@ async function createGuestSession() {
 
 // Enable Continue only after consent.
 consentCheckbox.addEventListener("change", () => {
-    continueButton.disabled = !consentCheckbox.checked;
+    continueButton.disabled = !consentCheckbox.checked || !guestSessionToken;
 });
 
 continueButton.addEventListener("click", () => {
@@ -211,6 +213,8 @@ searchButton.addEventListener("click", async () => {
 // Display search results.
 function displayResults(data) {
 
+    resultObjectUrls.forEach(URL.revokeObjectURL);
+    resultObjectUrls = [];
     resultsList.replaceChildren();
 
     resultSummary.textContent =
@@ -233,6 +237,38 @@ function displayResults(data) {
             const card = document.createElement("div");
             card.className = "match-card";
 
+            const photo = document.createElement("img");
+            photo.alt = `Matching event photo: ${match.filename}`;
+            photo.className = "match-photo";
+
+            const download = document.createElement("button");
+            download.textContent = "Download photo";
+            download.disabled = true;
+
+            const status = document.createElement("small");
+            status.textContent = "Loading photo…";
+
+            const photoUrl = `/api/guest/photos/${match.photo_id}`;
+            fetch(photoUrl, { headers: { Authorization: `Bearer ${guestSessionToken}`, "X-Photo-Token": match.photo_token } })
+                .then(response => {
+                    if (!response.ok) throw new Error("Could not load photo. Please search again.");
+                    return response.blob();
+                })
+                .then(blob => {
+                    const objectUrl = URL.createObjectURL(blob);
+                    resultObjectUrls.push(objectUrl);
+                    photo.src = objectUrl;
+                    download.disabled = false;
+                    status.textContent = "";
+                    download.addEventListener("click", () => {
+                        const link = document.createElement("a");
+                        link.href = objectUrl;
+                        link.download = match.filename;
+                        link.click();
+                    });
+                })
+                .catch(error => { status.textContent = error.message; });
+
             const filename = document.createElement("strong");
             filename.textContent = match.filename;
 
@@ -247,7 +283,7 @@ function displayResults(data) {
             quality.textContent =
                 match.match_quality.replaceAll("_", " ");
 
-            card.append(filename, similarity, quality);
+            card.append(photo, filename, similarity, quality, status, download);
 
             resultsList.appendChild(card);
         });
@@ -258,6 +294,9 @@ function displayResults(data) {
 
 // Search using another selfie.
 document.getElementById("retry-btn").addEventListener("click", () => {
+
+    resultObjectUrls.forEach(URL.revokeObjectURL);
+    resultObjectUrls = [];
 
     selfieInput.value = "";
     selectedSelfie = null;

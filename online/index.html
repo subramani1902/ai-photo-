@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Find your event photos</title>
+  <style>
+    *{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f4f7f4;color:#25342d;margin:0}main{max-width:600px;margin:auto;padding:40px 20px}h1,h2{font-family:Georgia,serif}h1{font-size:2.5rem}p{line-height:1.6;color:#566a5e}.card{background:white;border:1px solid #e3ebe4;border-radius:18px;padding:24px;margin:18px 0}button,.download{background:#286b4a;color:white;border:0;border-radius:10px;padding:14px 20px;font-size:1rem;font-weight:bold;cursor:pointer}button:disabled{opacity:.5}input[type=file]{display:block;margin:18px 0;max-width:100%}.photo{width:100%;height:auto;border-radius:10px}.result{border-top:1px solid #e3ebe4;padding:20px 0}.result button{margin-top:10px}.message{color:#963a2b;white-space:pre-wrap}label{display:block;line-height:1.5;margin:18px 0}
+  </style>
+</head>
+<body><main>
+  <p>EVENT PHOTO FINDER</p><h1>Find your memories</h1>
+  <section class="card" id="form-section">
+    <h2>Find your event photos</h2>
+    <p>Choose a clear photo with only your face. Your selfie and matching photos are temporarily processed online. Your results expire after 24 hours and are deleted afterward.</p>
+    <label><input id="consent" type="checkbox"> I consent to face matching for this event.</label>
+    <input id="selfie" type="file" accept="image/jpeg,image/png,image/webp">
+    <button id="search" disabled>Find my photos</button>
+  </section>
+  <section class="card" id="results" hidden><h2>Your photos</h2><p id="summary"></p><div id="photos"></div><button id="again">Search again</button></section>
+  <p id="message" class="message" role="status"></p>
+</main><script type="module" src="./main.js"></script></body></html>
