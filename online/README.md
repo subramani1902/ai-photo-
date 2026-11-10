@@ -88,7 +88,8 @@ search index is rebuilt once per batch instead of once per photo. The local
 face engine uses the NVIDIA CUDA provider when available and falls back to CPU.
 Install dependencies from `requirements.txt` before starting the importer.
 For guest results, originals larger than 8 MB are converted to high-quality
-JPEG copies up to 4096 pixels before transfer; the local originals are retained.
+JPEG copies up to 1600 pixels and uploaded four at a time; the local originals
+are retained.
 
 ## Prototype limits
 

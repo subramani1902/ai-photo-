@@ -41,7 +41,7 @@ class FacePreprocessingTests(unittest.TestCase):
             cached_hash.assert_not_called()
             cached_hash.assert_not_called()
     def test_guest_transfer_uses_compressed_copy_and_keeps_original(self):
-        image = np.full((800, 1200, 3), 120, dtype=np.uint8)
+        image = np.full((1600, 2400, 3), 120, dtype=np.uint8)
         with TemporaryDirectory() as directory:
             source = Path(directory) / "original.jpg"
             transfer = Path(directory) / "transfer.jpg"
@@ -59,3 +59,5 @@ class FacePreprocessingTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), original)
             self.assertTrue(transfer.is_file())
             self.assertLess(transfer.stat().st_size, source.stat().st_size)
+            processed = cv2.imread(str(transfer))
+            self.assertEqual(processed.shape[:2], (1067, 1600))

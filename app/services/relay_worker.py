@@ -9,6 +9,7 @@ import mimetypes
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -23,8 +24,9 @@ from app.services.remote_matching import find_event_matches
 LOG = logging.getLogger(__name__)
 MAX_SELFIE_BYTES = 20 * 1024 * 1024
 MAX_RESULT_SOURCE_BYTES = 8 * 1024 * 1024
-MAX_RESULT_DIMENSION = 4096
-RESULT_JPEG_QUALITY = 90
+MAX_RESULT_DIMENSION = 1600
+RESULT_JPEG_QUALITY = 85
+RESULT_UPLOAD_WORKERS = 4
 
 
 def prepare_photo_for_transfer(source_path, output_path):
@@ -66,8 +68,9 @@ class RelayWorker:
         self.session.headers.update({"Authorization": f"Bearer {worker_secret}"})
         self.engine = engine
 
-    def request(self, method, path, *, retry_safe=False, **kwargs):
+    def request(self, method, path, *, retry_safe=False, session=None, **kwargs):
         # Multipart uploads consume their file objects; rewind them on each retry.
+        client = session or self.session
         files = kwargs.get("files", {})
         positions = [(value[1], value[1].tell()) for value in files.values() if hasattr(value[1], "tell")]
         attempts = 5 if retry_safe else 1
@@ -75,8 +78,8 @@ class RelayWorker:
             for file, position in positions:
                 file.seek(position)
             try:
-                response = self.session.request(method, self.relay_url + path,
-                                                timeout=(10, 120), allow_redirects=False, **kwargs)
+                response = client.request(method, self.relay_url + path,
+                                          timeout=(10, 120), allow_redirects=False, **kwargs)
                 if 300 <= response.status_code < 400:
                     raise requests.HTTPError("Relay redirects are not allowed.")
                 if response.status_code in (429, 500, 502, 503, 504) and attempt + 1 < attempts:
@@ -119,13 +122,12 @@ class RelayWorker:
                 if self.engine is None:
                     self.engine = FaceEngine()
                 matches = find_event_matches(self.event_id, selfie, engine=self.engine)
-                last_heartbeat = time.monotonic()
-                for match in matches:
-                    if match["photo_id"] in already_uploaded:
-                        continue
-                    if time.monotonic() - last_heartbeat >= 30:
-                        self.request("POST", f"/worker/jobs/{job_id}/heartbeat", headers=headers, retry_safe=True)
-                        last_heartbeat = time.monotonic()
+                matches = [
+                    match for match in matches
+                    if match["photo_id"] not in already_uploaded
+                ]
+
+                def upload_match(match):
                     source_path = Path(match["path"])
                     if source_path.stat().st_size > MAX_RESULT_SOURCE_BYTES:
                         transfer_path = prepare_photo_for_transfer(
@@ -134,12 +136,49 @@ class RelayWorker:
                         )
                     else:
                         transfer_path = source_path
-                    with transfer_path.open("rb") as photo:
-                        self.request("POST", f"/worker/jobs/{job_id}/results", headers=headers, retry_safe=True,
-                                     data={"photo_id": str(match["photo_id"]),
-                                           "similarity": str(match["similarity"])},
-                                     files={"photo": (transfer_path.name if transfer_path != source_path else match["filename"], photo,
-                                                      mimetypes.guess_type(transfer_path.name)[0] or "application/octet-stream")})
+                    with requests.Session() as upload_session:
+                        upload_session.headers.update(self.session.headers)
+                        with transfer_path.open("rb") as photo:
+                            self.request(
+                                "POST",
+                                f"/worker/jobs/{job_id}/results",
+                                headers=headers,
+                                retry_safe=True,
+                                session=upload_session,
+                                data={
+                                    "photo_id": str(match["photo_id"]),
+                                    "similarity": str(match["similarity"]),
+                                },
+                                files={
+                                    "photo": (
+                                        transfer_path.name if transfer_path != source_path else match["filename"],
+                                        photo,
+                                        mimetypes.guess_type(transfer_path.name)[0]
+                                        or "application/octet-stream",
+                                    )
+                                },
+                            )
+
+                last_heartbeat = time.monotonic()
+                for start in range(0, len(matches), RESULT_UPLOAD_WORKERS):
+                    if time.monotonic() - last_heartbeat >= 30:
+                        self.request(
+                            "POST",
+                            f"/worker/jobs/{job_id}/heartbeat",
+                            headers=headers,
+                            retry_safe=True,
+                        )
+                        last_heartbeat = time.monotonic()
+                    batch = matches[start:start + RESULT_UPLOAD_WORKERS]
+                    with ThreadPoolExecutor(max_workers=RESULT_UPLOAD_WORKERS) as executor:
+                        futures = [executor.submit(upload_match, match) for match in batch]
+                        for future in as_completed(futures):
+                            future.result()
+                    LOG.info(
+                        "Uploaded %d/%d matched photos",
+                        min(start + len(batch), len(matches)),
+                        len(matches),
+                    )
                 self.request("POST", f"/worker/jobs/{job_id}/complete", headers=headers, retry_safe=True)
                 LOG.info("Finished request %s with %d matches", job_id, len(matches))
         except ValueError as exc:
