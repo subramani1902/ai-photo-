@@ -1,3 +1,5 @@
+import { createPhotoArchive } from "./photo-archive.mjs";
+
 const RELAY = "https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay";
 const MAX_SELFIE_BYTES = 10 * 1024 * 1024;
 const currentUrl = new URL(location.href);
@@ -6,7 +8,7 @@ if (eventToken) history.replaceState({}, "", location.pathname);
 const $ = selector => document.querySelector(selector);
 const consent = $("#consent"), selfie = $("#selfie"), search = $("#search"), message = $("#message");
 const formSection = $("#form-section"), results = $("#results"), photos = $("#photos"), preview = $("#preview");
-let objectUrls = [], selectedPhoto = null, busy = false;
+let objectUrls = [], downloadablePhotos = [], selectedPhoto = null, busy = false;
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
 function showMessage(text) {
@@ -110,6 +112,27 @@ function downloadPhoto(photo) {
   link.href = photo.url; link.download = photo.filename;
   document.body.append(link); link.click(); link.remove();
 }
+$("#download-all").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const items = downloadablePhotos.filter(Boolean);
+  if (!items.length || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Preparing ZIP…";
+  try {
+    const archive = await createPhotoArchive(items);
+    const url = URL.createObjectURL(archive);
+    const link = document.createElement("a");
+    link.href = url; link.download = "event-photos.zip";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    button.textContent = `Download all again (${items.length}) ↓`;
+  } catch {
+    button.textContent = "Download all (.zip) ↓";
+    message.textContent = "Could not prepare the photo archive. Please try again.";
+  } finally {
+    button.disabled = items.length === 0;
+  }
+});
 function showPhoto(photo) {
   selectedPhoto = photo;
   $("#preview-image").src = photo.url;
@@ -119,7 +142,7 @@ function showPhoto(photo) {
 $("#close-preview").addEventListener("click", () => preview.close());
 $("#preview-download").addEventListener("click", () => { if (selectedPhoto) downloadPhoto(selectedPhoto); });
 
-async function renderPhoto(photo, job, headers) {
+async function renderPhoto(photo, job, headers, index) {
   const card = document.createElement("article"); card.className = "result";
   const open = document.createElement("button"); open.className = "photo-open"; open.disabled = true;
   open.setAttribute("aria-label", "View " + photo.filename);
@@ -133,7 +156,8 @@ async function renderPhoto(photo, job, headers) {
   try {
     const blob = await (await request(`/guest/jobs/${job.job_id}/photos/${photo.id}`, { headers })).blob();
     const url = URL.createObjectURL(blob); objectUrls.push(url);
-    const readyPhoto = { url, filename: photo.filename }; image.src = url;
+    const readyPhoto = { url, filename: photo.filename, blob };
+    downloadablePhotos[index] = readyPhoto; image.src = url;
     open.disabled = false; download.disabled = false;
     open.addEventListener("click", () => showPhoto(readyPhoto));
     download.addEventListener("click", () => downloadPhoto(readyPhoto));
@@ -161,12 +185,16 @@ search.addEventListener("click", async () => {
       showMessage(status.status === "processing" ? "Matching your face with event photos…" : "Waiting for the event laptop…");
     }
     formSection.hidden = true; results.hidden = false; photos.replaceChildren();
+    downloadablePhotos = [];
+    $("#download-all").disabled = true;
+    $("#download-all").textContent = "Download all (.zip) ↓";
     const count = status.photos.length;
     $("#summary").textContent = count ? `We found ${count} photo${count === 1 ? "" : "s"} of you.` : "No photos found this time.";
     $("#gallery-count").textContent = count;
     $("#empty").hidden = count !== 0;
     message.textContent = "";
-    await Promise.all(status.photos.map(photo => renderPhoto(photo, job, headers)));
+    await Promise.all(status.photos.map((photo, index) => renderPhoto(photo, job, headers, index)));
+    $("#download-all").disabled = downloadablePhotos.filter(Boolean).length === 0;
     window.scrollTo({ top: 0, behavior: "auto" });
   } catch (error) { message.textContent = error.message; }
   finally { busy = false; setLoadingAnimation(false); search.firstChild.textContent = "Find my photos "; updateButton(); }
@@ -174,7 +202,8 @@ search.addEventListener("click", async () => {
 
 $("#again").addEventListener("click", () => {
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
-  selectedPhoto = null; photos.replaceChildren();
+  downloadablePhotos = []; selectedPhoto = null; photos.replaceChildren();
+  $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";
   results.hidden = true; formSection.hidden = false; selfie.value = "";
   $("#file-label").textContent = "Choose a photo"; message.textContent = "";
   updateButton(); window.scrollTo({ top: 0, behavior: "auto" });

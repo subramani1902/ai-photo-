@@ -6,6 +6,7 @@
 @media(max-width:600px){.topbar{height:72px;padding:0 20px}.top-label{display:none}.brand{font-size:19px}.brand-mark{width:36px;height:36px}main{width:calc(100% - 36px)}.intro{margin-top:48px}h1{font-size:52px}.intro-copy{font-size:14px}.upload-card{margin-top:27px;padding:21px;border-radius:16px}.card-heading h2{font-size:25px}.results{padding-top:42px}.results-head h1{font-size:48px}.gallery-toolbar{margin-top:32px}.photos{gap:12px}.photos[data-view=compact]{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.photo-open{border-radius:9px}.photo-name{font-size:11px}.preview-footer{flex-wrap:wrap}.preview-footer .primary{width:100%}}
 @media(max-width:360px){h1,.results-head h1{font-size:42px}.results-head{align-items:start;flex-direction:column;gap:2px}.gallery-toolbar{margin-top:22px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important}}
+.gallery-actions{display:flex;align-items:center;gap:14px;min-width:0}.download-all{border:1px solid #cbd9ce;border-radius:9px;padding:10px 13px;background:#fff;color:var(--green);font-size:12px;font-weight:700;white-space:nowrap}.download-all:disabled{opacity:.5;cursor:wait}@media(max-width:600px){.gallery-actions{align-items:flex-start;flex-direction:column;gap:8px}.download-all{padding:9px 11px}}
 
 /* Contact menu and a more compact first screen. Content can still scroll on
    very short screens or when the browser's text size is increased. */
