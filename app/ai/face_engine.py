@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import onnxruntime as ort
 
 from insightface.app import FaceAnalysis
 
@@ -28,15 +29,40 @@ class FaceEngine:
 
         print("Initializing InsightFace...")
 
+        available_providers = ort.get_available_providers()
+        if "CUDAExecutionProvider" in available_providers:
+            ort.preload_dlls(directory="")
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            context_id = 0
+        else:
+            providers = ["CPUExecutionProvider"]
+            context_id = -1
+
         self.model = FaceAnalysis(
             name="buffalo_l",
-            providers=["CPUExecutionProvider"]
+            providers=providers
         )
 
         self.model.prepare(
-            ctx_id=-1,
+            ctx_id=context_id,
             det_size=(640, 640)
         )
+
+        if "CUDAExecutionProvider" in providers and not all(
+            "CUDAExecutionProvider" in self.model.models[task].session.get_providers()
+            for task in ("detection", "recognition")
+        ):
+            print("CUDA did not activate for detection and recognition; using CPU.")
+            providers = ["CPUExecutionProvider"]
+            context_id = -1
+            self.model = FaceAnalysis(
+                name="buffalo_l",
+                providers=providers
+            )
+            self.model.prepare(
+                ctx_id=context_id,
+                det_size=(640, 640)
+            )
 
         # Quality assessment thresholds.
         # These are initial heuristics and require
@@ -50,6 +76,7 @@ class FaceEngine:
         self.max_brightness = 230.0
 
         print("InsightFace loaded successfully.")
+        print(f"ONNX Runtime providers: {providers}")
 
     # --------------------------------------------------
     # FACE QUALITY ASSESSMENT

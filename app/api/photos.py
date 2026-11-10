@@ -198,7 +198,8 @@ def cached_file_hash(path, size, modified_ns):
 def is_duplicate(
     db: Session,
     event_id: int,
-    file_hash: str
+    file_hash: str,
+    file_size: int
 ):
 
     photos = (
@@ -222,6 +223,9 @@ def is_duplicate(
         try:
 
             stat = existing_path.stat()
+            if stat.st_size != file_size:
+                continue
+
             existing_hash = cached_file_hash(
                 str(existing_path.resolve()), stat.st_size, stat.st_mtime_ns
             )
@@ -412,7 +416,8 @@ async def upload_event_photos(
                 if is_duplicate(
                     db,
                     event_id,
-                    file_hash
+                    file_hash,
+                    len(content)
                 ):
 
                     skipped_duplicates += 1

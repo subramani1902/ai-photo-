@@ -83,8 +83,10 @@ Keep it private and never commit it. The worker and the laptop's internet
 connection must stay on. The web page accepts selfies up to 10 MB; event photo
 imports accept files up to 100 MB. Originals are stored unchanged, while images
 over 4096 pixels on their longest edge are downscaled only in memory for face
-detection. The camera importer sends up to 10 photos per batch so the face
-search index is rebuilt once per batch instead of once per photo.
+detection. The camera importer sends up to 20 photos per batch so the face
+search index is rebuilt once per batch instead of once per photo. The local
+face engine uses the NVIDIA CUDA provider when available and falls back to CPU.
+Install dependencies from `requirements.txt` before starting the importer.
 
 ## Prototype limits
 

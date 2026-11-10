@@ -15,7 +15,7 @@ from watch_camera_folder import scan_ready
 
 LOG = logging.getLogger(__name__)
 MAX_FILE_SIZE = 100 * 1024 * 1024
-MAX_FILES_PER_BATCH = 10
+MAX_FILES_PER_BATCH = 20
 
 
 async def run(folder, event_id):
