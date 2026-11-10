@@ -26,6 +26,7 @@ from app.database.models import Event, Photo, Face, User
 from app.dependencies.auth import get_current_admin
 from app.ai.face_engine import FaceEngine
 from app.services.persistent_face_index import PersistentFaceIndex
+from app.services.person_groups import sync_person_groups
 
 
 # --------------------------------------------------
@@ -188,6 +189,12 @@ def save_quality_metadata(
 # DUPLICATE CHECK
 # --------------------------------------------------
 
+@lru_cache(maxsize=10000)
+def cached_file_hash(path, size, modified_ns):
+    # Stat values invalidate the cached digest when an original changes.
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def is_duplicate(
     db: Session,
     event_id: int,
@@ -214,9 +221,10 @@ def is_duplicate(
 
         try:
 
-            existing_hash = hashlib.sha256(
-                existing_path.read_bytes()
-            ).hexdigest()
+            stat = existing_path.stat()
+            existing_hash = cached_file_hash(
+                str(existing_path.resolve()), stat.st_size, stat.st_mtime_ns
+            )
 
             if existing_hash == file_hash:
                 return True
@@ -535,6 +543,7 @@ async def upload_event_photos(
                 # COMMIT PHOTO
                 # ----------------------------------
 
+                sync_person_groups(db, event_id)
                 db.commit()
                 db.refresh(photo)
 

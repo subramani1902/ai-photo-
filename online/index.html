@@ -9,11 +9,21 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="./" aria-label="Event Photo Finder home"><span class="brand-mark" aria-hidden="true">✳</span><span>the photo finder<small>YOUR MOMENTS, FOUND</small></span></a><span class="top-label">EVENT GALLERY</span></header>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="SM Photos home"><span class="brand-mark" aria-hidden="true">✳</span><span>SM Photos<small>YOUR MOMENTS, FOUND</small></span></a>
+    <div class="menu-wrap">
+      <button class="menu-trigger" id="menu-trigger" type="button" aria-label="Open contact menu" aria-expanded="false" aria-controls="contact-menu"><span></span><span></span><span></span></button>
+      <div class="contact-menu" id="contact-menu" hidden>
+        <p>GET IN TOUCH</p>
+        <button type="button" disabled>Instagram <span>Coming soon</span></button>
+        <button type="button" disabled>Facebook <span>Coming soon</span></button>
+        <button type="button" disabled>Call <span>Coming soon</span></button>
+      </div>
+    </div>
+  </header>
   <main>
     <section id="form-section" class="intro">
-      <div class="eyebrow"><span></span> MADE FOR YOUR MEMORIES</div>
-      <h1>Finding <br><em>Moments.</em></h1>
+      <h1>Finding <em>Moments.</em></h1>
       <p class="intro-copy">The best moments are the ones you're in. Find your photos from the event in just a few seconds.</p>
       <div class="upload-card">
         <div class="card-heading"><div><span class="step">01 / LET'S GET STARTED</span><h2>Find your photos</h2></div><span class="sparkle" aria-hidden="true">✳</span></div>
@@ -24,7 +34,11 @@
         <button id="search" class="primary" disabled>Find my photos <span aria-hidden="true">↗</span></button>
         <p class="privacy"><span aria-hidden="true">◇</span> Your selfie and matches are processed temporarily. Results expire after 24 hours and are deleted afterward.</p>
       </div>
-      <div class="bottom-note"><span>MADE FOR THE MOMENTS THAT MATTER</span><span>✳</span></div>
+      <div class="social-links" aria-label="SM Photos contact links">
+        <button type="button" disabled aria-label="Facebook — coming soon" title="Facebook — coming soon"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13.5 21v-8h2.7l.4-3h-3.1V8.1c0-.87.24-1.46 1.55-1.46h1.66V3.96a22 22 0 0 0-2.42-.13c-2.4 0-4.04 1.46-4.04 4.15V10H7.5v3h2.75v8z"/></svg></button>
+        <button type="button" disabled aria-label="Instagram — coming soon" title="Instagram — coming soon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></button>
+        <button type="button" disabled aria-label="Call — coming soon" title="Call — coming soon"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.6 3.8 8 3l2 4.2-1.7 1.5a14 14 0 0 0 7 7l1.5-1.7 4.2 2-.8 2.4a2.3 2.3 0 0 1-2.5 1.5C10.6 19 5 13.4 4.1 6.3a2.3 2.3 0 0 1 1.5-2.5Z"/></svg></button>
+      </div>
     </section>
     <section id="results" class="results" hidden>
       <div class="eyebrow"><span></span> YOUR EVENT GALLERY</div>
@@ -41,6 +55,13 @@
     <p id="message" class="message" role="status" aria-live="polite"></p>
   </main>
   <dialog id="preview" class="preview"><div class="preview-bar"><span>YOUR PHOTO</span><button id="close-preview" aria-label="Close photo preview">✕</button></div><img id="preview-image" alt="Selected event photo"><div class="preview-footer"><span id="preview-name"></span><button id="preview-download" class="primary">Download photo ↓</button></div></dialog>
+  <dialog id="loading-animation" class="scan-overlay" aria-labelledby="scan-title" aria-describedby="loading-status">
+    <div class="scan-visual"><img id="scan-fallback" src="./camera-aperture.svg" alt=""><canvas id="scan-canvas" width="520" height="390" hidden aria-hidden="true"></canvas></div>
+    <h2 id="scan-title">Finding your moments</h2>
+    <p id="loading-status" role="status" aria-live="polite">Sending your selfie…</p>
+    <button id="scan-playback" class="text-button" type="button" hidden>Pause animation</button>
+    <p class="scan-note">Please keep this page open.</p>
+  </dialog>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

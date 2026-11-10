@@ -39,4 +39,10 @@ QR.png
 .vscode/
 .idea/
 .DS_Store
-Thumbs.db
+Thumbs.hotos
+
+Candid/
+.Candid
+
+sample_photos/
+.sample_photos

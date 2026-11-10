@@ -11,7 +11,7 @@ need to be imported. In a separate PowerShell terminal run:
 
 ```powershell
 .\s-venv\Scripts\Activate.ps1
-python -m app.services.relay_worker --event-id 2 --relay-url https://ifudnqcgvqafhzazqlku.supabase.co/functions/v1/relay
+python -m app.services.relay_worker --event-id 3 --relay-url https://ifudnqcgvqafhzazqlku.supabase.co/functions/v1/relay
 ```
 
 The ignored `.env.relay` file contains the test event and worker secrets. Keep
@@ -20,7 +20,7 @@ ignored by Git. The worker and the laptop's internet connection must stay on.
 
 ## Prototype limits
 
-- This setup is paired to local event ID 2 (Celebrity Five Test) and the current Supabase test event. Its intake folder is `D:\Codes\ai-photo-\sample_photos`.
+- This setup is paired to local event ID 3 (Candid Test) and the current Supabase test event. Its intake folder is `D:\Codes\sm-photo\Candid`.
 - Results expire after 24 hours. An independent Supabase task runs every five
   minutes and deletes expired files after a 30-minute grace period. If Supabase
   is unavailable or deletion fails, a later scheduled run retries; a backlog
