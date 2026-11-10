@@ -201,6 +201,7 @@ async function renderPhoto(photo, job, headers, index) {
   const select = document.createElement("input");
   select.className = "photo-select";
   select.type = "checkbox";
+  select.setAttribute("aria-label", `Select ${photo.filename}`);
   select.disabled = true;
   select.dataset.photoIndex = index;
   select.addEventListener("change", () => {
