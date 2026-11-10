@@ -7,6 +7,7 @@
 @media(max-width:360px){h1,.results-head h1{font-size:42px}.results-head{align-items:start;flex-direction:column;gap:2px}.gallery-toolbar{margin-top:22px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important}}
 .gallery-actions{display:flex;align-items:center;gap:14px;min-width:0}.download-all{border:1px solid #cbd9ce;border-radius:9px;padding:10px 13px;background:#fff;color:var(--green);font-size:12px;font-weight:700;white-space:nowrap}.download-all:disabled{opacity:.5;cursor:wait}@media(max-width:600px){.gallery-actions{align-items:flex-start;flex-direction:column;gap:8px}.download-all{padding:9px 11px}}
+.bulk-actions{display:flex;flex-wrap:wrap;gap:8px}.result{position:relative}.photo-select-label{position:absolute;top:10px;right:10px;z-index:1;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:#fffF;color:var(--green);box-shadow:0 2px 8px #183a2d25;cursor:pointer}.photo-select{width:19px;height:19px;margin:0;accent-color:var(--green);cursor:pointer}.photos[data-view=compact] .photo-select-label{top:7px;right:7px;width:29px;height:29px}.photos[data-view=list] .photo-select-label{top:14px;left:62px;right:auto}
 
 /* Contact menu and a more compact first screen. Content can still scroll on
    very short screens or when the browser's text size is increased. */
