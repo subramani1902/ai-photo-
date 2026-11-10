@@ -32,17 +32,30 @@ def find_event_matches(event_id, selfie_path, *, engine=None, min_similarity=0.6
         if not event.event_name or Path(event.event_name).name != event.event_name or event.event_name in {".", ".."}:
             raise ValueError("Invalid event folder name.")
         root = (Path("storage/events") / event.event_name).resolve()
+        eligible_matches = [
+            match for match in matches
+            if match["similarity"] >= min_similarity
+        ]
+        records_by_face_id = {}
+        if eligible_matches:
+            records = (
+                db.query(Face, Photo)
+                .join(Photo, Face.photo_id == Photo.id)
+                .filter(
+                    Face.id.in_([match["face_id"] for match in eligible_matches]),
+                    Photo.event_id == event_id,
+                )
+                .all()
+            )
+            records_by_face_id = {
+                face.id: photo for face, photo in records
+            }
+
         results = {}
-        for match in matches:
-            if match["similarity"] < min_similarity:
+        for match in eligible_matches:
+            photo = records_by_face_id.get(match["face_id"])
+            if photo is None:
                 continue
-            record = (db.query(Face, Photo)
-                      .join(Photo, Face.photo_id == Photo.id)
-                      .filter(Face.id == match["face_id"], Photo.event_id == event_id)
-                      .first())
-            if record is None:
-                continue
-            _, photo = record
             path = Path(photo.file_path).resolve()
             if not path.is_relative_to(root) or not path.is_file():
                 continue

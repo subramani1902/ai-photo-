@@ -12,6 +12,7 @@ let objectUrls = [], downloadablePhotos = [], selectedPhoto = null, busy = false
 let selectedSelfie = null, cameraStream = null, cameraPreviewUrl = null;
 const selectedPhotoIndexes = new Set();
 let downloadedCount = 0;
+let galleryPhotoCount = 0, settledPhotoCount = 0;
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
 function showMessage(text) {
@@ -236,6 +237,7 @@ $("#download-all").addEventListener("click", async event => {
 function updateSelectionControls() {
   const readyIndexes = downloadablePhotos.flatMap((photo, index) => photo ? [index] : []);
   const selectedCount = readyIndexes.filter(index => selectedPhotoIndexes.has(index)).length;
+  $("#download-all").disabled = readyIndexes.length === 0 || settledPhotoCount < galleryPhotoCount;
   const selectAll = $("#select-all");
   selectAll.disabled = readyIndexes.length === 0;
   selectAll.textContent = readyIndexes.length > 0 && selectedCount === readyIndexes.length
@@ -324,8 +326,13 @@ async function renderPhoto(photo, job, headers, index) {
     select.disabled = false;
     open.addEventListener("click", () => showPhoto(readyPhoto));
     download.addEventListener("click", () => downloadPhoto(readyPhoto));
+  } catch {
+    name.textContent = "Couldn't load photo";
+    open.setAttribute("aria-label", "Photo could not be loaded");
+  } finally {
+    settledPhotoCount += 1;
     updateSelectionControls();
-  } catch { name.textContent = "Couldn't load photo"; open.setAttribute("aria-label", "Photo could not be loaded"); }
+  }
 }
 
 search.addEventListener("click", async () => {
@@ -342,18 +349,21 @@ search.addEventListener("click", async () => {
     showMessage("Finding your photos…");
     let status;
     while (true) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       status = await (await request(`/guest/jobs/${job.job_id}`, { headers })).json();
       if (status.status === "completed") break;
       if (status.status === "failed") throw new Error(status.message || "Could not process the selfie.");
       showMessage(status.status === "processing" ? "Matching your face with event photos…" : "Waiting for the event laptop…");
     }
+    setLoadingAnimation(false);
     formSection.hidden = true; results.hidden = false; photos.replaceChildren();
     $("#gallery-action-bar").hidden = false;
     document.body.classList.add("gallery-visible");
     downloadablePhotos = [];
     selectedPhotoIndexes.clear();
     downloadedCount = 0;
+    galleryPhotoCount = status.photos.length;
+    settledPhotoCount = 0;
     $("#download-status").textContent = "Downloaded 0 photos";
     $("#download-all").disabled = true;
     $("#download-all").textContent = "Download all (.zip) ↓";
@@ -363,8 +373,7 @@ search.addEventListener("click", async () => {
     $("#gallery-count").textContent = count;
     $("#empty").hidden = count !== 0;
     message.textContent = "";
-    await Promise.all(status.photos.map((photo, index) => renderPhoto(photo, job, headers, index)));
-    $("#download-all").disabled = downloadablePhotos.filter(Boolean).length === 0;
+    status.photos.forEach((photo, index) => { void renderPhoto(photo, job, headers, index); });
     updateSelectionControls();
     window.scrollTo({ top: 0, behavior: "auto" });
   } catch (error) { message.textContent = error.message; }
@@ -374,6 +383,7 @@ search.addEventListener("click", async () => {
 $("#again").addEventListener("click", () => {
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
+  galleryPhotoCount = 0; settledPhotoCount = 0;
   $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";
   updateSelectionControls();
   $("#gallery-action-bar").hidden = true;
