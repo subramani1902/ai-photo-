@@ -9,7 +9,9 @@ const $ = selector => document.querySelector(selector);
 const consent = $("#consent"), selfie = $("#selfie"), search = $("#search"), message = $("#message");
 const formSection = $("#form-section"), results = $("#results"), photos = $("#photos"), preview = $("#preview");
 let objectUrls = [], downloadablePhotos = [], selectedPhoto = null, busy = false;
+let selectedSelfie = null, cameraStream = null, cameraPreviewUrl = null;
 const selectedPhotoIndexes = new Set();
+let downloadedCount = 0;
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
 function showMessage(text) {
@@ -73,18 +75,109 @@ document.addEventListener("keydown", event => {
 });
 
 function updateButton() {
-  const file = selfie.files[0];
+  const file = selectedSelfie;
   search.disabled = busy || !consent.checked || !file || file.size > MAX_SELFIE_BYTES;
 }
 consent.addEventListener("change", updateButton);
 selfie.addEventListener("change", () => {
   const file = selfie.files[0];
+  stopCamera();
+  clearCameraPreview();
+  selectedSelfie = file || null;
   $("#file-label").textContent = file?.name || "Choose a photo";
   showMessage(file && file.size > MAX_SELFIE_BYTES
     ? "This photo is larger than 10 MB. Please choose a smaller photo."
     : "");
   updateButton();
 });
+function stopCamera() {
+  cameraStream?.getTracks().forEach(track => track.stop());
+  cameraStream = null;
+  $("#camera-video").srcObject = null;
+}
+function clearCameraPreview() {
+  if (cameraPreviewUrl) URL.revokeObjectURL(cameraPreviewUrl);
+  cameraPreviewUrl = null;
+  $("#camera-preview").removeAttribute("src");
+  $("#camera-preview").hidden = true;
+  $("#retake-selfie").hidden = true;
+  $("#capture-selfie").hidden = false;
+}
+$("#open-camera").addEventListener("click", async () => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showMessage("Live camera is unavailable in this browser. Choose a photo instead.");
+    return;
+  }
+  try {
+    stopCamera();
+    clearCameraPreview();
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } },
+    });
+    $("#camera-video").srcObject = cameraStream;
+    $("#camera-video").hidden = false;
+    $("#camera-panel").hidden = false;
+    $("#open-camera").hidden = true;
+    showMessage("");
+  } catch (error) {
+    const reason = error.name === "NotAllowedError"
+      ? "Camera access was denied. Allow camera access in your browser, or choose a photo instead."
+      : error.name === "NotFoundError"
+        ? "No camera was found on this device. Choose a photo instead."
+        : "Could not start the camera. Check camera permissions and try again.";
+    stopCamera();
+    showMessage(reason);
+  }
+});
+$("#capture-selfie").addEventListener("click", async () => {
+  const video = $("#camera-video");
+  if (!cameraStream || !video.videoWidth || !video.videoHeight) {
+    showMessage("The camera is not ready yet. Please wait a moment and try again.");
+    return;
+  }
+  const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+  if (!blob) {
+    showMessage("Could not capture the selfie. Please try again.");
+    return;
+  }
+  selectedSelfie = new File([blob], `live-selfie-${Date.now()}.jpg`, { type: "image/jpeg" });
+  stopCamera();
+  clearCameraPreview();
+  cameraPreviewUrl = URL.createObjectURL(blob);
+  $("#camera-preview").src = cameraPreviewUrl;
+  $("#camera-preview").hidden = false;
+  $("#camera-video").hidden = true;
+  $("#capture-selfie").hidden = true;
+  $("#retake-selfie").hidden = false;
+  $("#file-label").textContent = "Live selfie ready";
+  showMessage(blob.size > MAX_SELFIE_BYTES
+    ? "This selfie is larger than 10 MB. Retake it or choose a smaller photo."
+    : "");
+  updateButton();
+});
+$("#retake-selfie").addEventListener("click", async () => {
+  selectedSelfie = null;
+  $("#file-label").textContent = "Choose a photo";
+  $("#camera-panel").hidden = true;
+  $("#open-camera").hidden = false;
+  updateButton();
+  $("#open-camera").click();
+});
+$("#close-camera").addEventListener("click", () => {
+  stopCamera();
+  clearCameraPreview();
+  $("#camera-panel").hidden = true;
+  $("#camera-video").hidden = false;
+  $("#open-camera").hidden = false;
+  showMessage("");
+});
+window.addEventListener("pagehide", stopCamera);
 
 document.querySelectorAll(".view-button").forEach(button => button.addEventListener("click", () => {
   photos.dataset.view = button.dataset.view;
@@ -112,6 +205,11 @@ function downloadPhoto(photo) {
   const link = document.createElement("a");
   link.href = photo.url; link.download = photo.filename;
   document.body.append(link); link.click(); link.remove();
+  updateDownloadedStatus(1);
+}
+function updateDownloadedStatus(count) {
+  downloadedCount += count;
+  $("#download-status").textContent = `Downloaded ${downloadedCount} photo${downloadedCount === 1 ? "" : "s"}`;
 }
 $("#download-all").addEventListener("click", async event => {
   const button = event.currentTarget;
@@ -126,6 +224,7 @@ $("#download-all").addEventListener("click", async event => {
     link.href = url; link.download = "event-photos.zip";
     document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    updateDownloadedStatus(items.length);
     button.textContent = `Download all again (${items.length}) ↓`;
   } catch {
     button.textContent = "Download all (.zip) ↓";
@@ -173,6 +272,7 @@ $("#download-selected").addEventListener("click", async event => {
     link.href = url; link.download = "selected-event-photos.zip";
     document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    updateDownloadedStatus(items.length);
     button.textContent = `Downloaded ${items.length} selected`;
   } catch {
     message.textContent = "Could not prepare the selected photo archive. Please try again.";
@@ -229,12 +329,12 @@ async function renderPhoto(photo, job, headers, index) {
 }
 
 search.addEventListener("click", async () => {
-  if (!consent.checked || !selfie.files.length || busy) return;
+  if (!consent.checked || !selectedSelfie || busy) return;
   busy = true; updateButton();
   setLoadingAnimation(true);
   search.firstChild.textContent = "Finding your photos ";
   showMessage("Sending your selfie…");
-  const body = new FormData(); body.append("file", selfie.files[0]);
+  const body = new FormData(); body.append("file", selectedSelfie);
   try {
     const eventHeaders = eventToken ? { "X-Event-Token": eventToken } : {};
     const job = await (await request("/guest/submit", { method: "POST", headers: eventHeaders, body })).json();
@@ -249,8 +349,12 @@ search.addEventListener("click", async () => {
       showMessage(status.status === "processing" ? "Matching your face with event photos…" : "Waiting for the event laptop…");
     }
     formSection.hidden = true; results.hidden = false; photos.replaceChildren();
+    $("#gallery-action-bar").hidden = false;
+    document.body.classList.add("gallery-visible");
     downloadablePhotos = [];
     selectedPhotoIndexes.clear();
+    downloadedCount = 0;
+    $("#download-status").textContent = "Downloaded 0 photos";
     $("#download-all").disabled = true;
     $("#download-all").textContent = "Download all (.zip) ↓";
     updateSelectionControls();
@@ -272,7 +376,13 @@ $("#again").addEventListener("click", () => {
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
   $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";
   updateSelectionControls();
+  $("#gallery-action-bar").hidden = true;
+  document.body.classList.remove("gallery-visible");
+  downloadedCount = 0;
+  $("#download-status").textContent = "Downloaded 0 photos";
   results.hidden = true; formSection.hidden = false; selfie.value = "";
+  stopCamera(); clearCameraPreview(); selectedSelfie = null;
+  $("#camera-panel").hidden = true; $("#camera-video").hidden = false; $("#open-camera").hidden = false;
   $("#file-label").textContent = "Choose a photo"; message.textContent = "";
   updateButton(); window.scrollTo({ top: 0, behavior: "auto" });
 });

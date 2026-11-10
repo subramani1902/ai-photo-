@@ -80,8 +80,10 @@ In a second terminal, start the relay worker:
 
 The ignored `.env.relay` file must contain the test event and worker secrets.
 Keep it private and never commit it. The worker and the laptop's internet
-connection must stay on. The web page accepts selfies up to 10 MB; event photo
-imports accept files up to 100 MB. Originals are stored unchanged, while images
+connection must stay on. The web page accepts uploaded or camera-captured selfies up to 10 MB; live
+camera capture requires browser camera permission and a secure HTTPS connection.
+Captured images are sent through the same temporary search flow as uploaded
+photos. Event photo imports accept files up to 100 MB. Originals are stored unchanged, while images
 over 4096 pixels on their longest edge are downscaled only in memory for face
 detection. The camera importer sends up to 20 photos per batch so the face
 search index is rebuilt once per batch instead of once per photo. The local
