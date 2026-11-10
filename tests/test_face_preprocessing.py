@@ -1,7 +1,8 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -10,7 +11,11 @@ from app.api.photos import is_duplicate
 from app.ai.face_engine import (
     prepare_image_for_processing,
 )
-from app.services.relay_worker import prepare_photo_for_transfer
+from app.services.relay_worker import (
+    RelayWorker,
+    prepare_photo_for_showcase,
+    prepare_photo_for_transfer,
+)
 
 
 class FacePreprocessingTests(unittest.TestCase):
@@ -61,3 +66,44 @@ class FacePreprocessingTests(unittest.TestCase):
             self.assertLess(transfer.stat().st_size, source.stat().st_size)
             processed = cv2.imread(str(transfer))
             self.assertEqual(processed.shape[:2], (1067, 1600))
+
+    def test_event_showcase_preview_is_small_webp_and_keeps_original(self):
+        image = np.full((1200, 1800, 3), 120, dtype=np.uint8)
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "original.jpg"
+            preview = Path(directory) / "preview.webp"
+            self.assertTrue(cv2.imwrite(str(source), image))
+            original = source.read_bytes()
+
+            prepare_photo_for_showcase(source, preview)
+
+            self.assertEqual(source.read_bytes(), original)
+            self.assertLessEqual(preview.stat().st_size, 2 * 1024 * 1024)
+            processed = cv2.imread(str(preview))
+            self.assertEqual(processed.shape[:2], (427, 640))
+
+    def test_event_showcase_sync_keeps_only_latest_local_photos(self):
+        event_query, photo_query, db = Mock(), Mock(), MagicMock()
+        db.__enter__.return_value = db
+        db.query.side_effect = [event_query, photo_query]
+        event_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(
+            event_name="Sample event"
+        )
+        photo_query.filter_by.return_value.order_by.return_value.limit.return_value.all.return_value = [
+            SimpleNamespace(id=3, filename="three.jpg", file_path="unused"),
+            SimpleNamespace(id=2, filename="two.jpg", file_path="unused"),
+            SimpleNamespace(id=1, filename="one.jpg", file_path="unused"),
+        ]
+        worker = RelayWorker("https://relay.example", "secret", 5)
+        current = Mock()
+        current.json.return_value = {"event_name": "Sample event", "photo_ids": [1, 2, 3]}
+
+        with patch("app.database.db.SessionLocal", return_value=db), \
+                patch.object(worker, "request", return_value=current) as request:
+            worker.sync_showcase()
+
+        self.assertEqual(request.call_args_list[0].args, ("GET", "/worker/showcase"))
+        self.assertEqual(
+            request.call_args_list[1].kwargs["json"],
+            {"event_name": "Sample event", "photo_ids": [3, 2, 1]}
+        )

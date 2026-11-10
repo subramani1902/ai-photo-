@@ -202,6 +202,35 @@ async function request(path, options = {}) {
   }
   return response;
 }
+
+async function loadEventShowcase() {
+  const response = await request("/guest/showcase", {
+    headers: { "X-Event-Token": eventToken },
+  });
+  const { event_name: eventName, photos: eventPhotos } = await response.json();
+  if (!Array.isArray(eventPhotos) || eventPhotos.length === 0) return;
+
+  $("#showcase-title").textContent = `A few moments from ${eventName}`;
+  const showcasePhotos = $("#showcase-photos");
+  showcasePhotos.replaceChildren();
+  for (const photo of eventPhotos) {
+    const image = document.createElement("img");
+    image.src = photo.url;
+    image.alt = "A photo from this event";
+    image.loading = "lazy";
+    image.decoding = "async";
+    showcasePhotos.append(image);
+  }
+  $("#event-showcase").hidden = false;
+}
+
+if (eventToken) {
+  loadEventShowcase().catch(error => {
+    console.error("Event showcase could not be loaded:", error);
+    showMessage("Event preview photos are temporarily unavailable. Please try again later.");
+  });
+}
+
 function downloadPhoto(photo) {
   const link = document.createElement("a");
   link.href = photo.url; link.download = photo.filename;

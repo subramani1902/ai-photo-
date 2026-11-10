@@ -6,8 +6,6 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
   auth: { persistSession: false, autoRefreshToken: false },
 });
 const bucket = "photo-finder-private";
-// The direct website opens this one event; other events still require a QR token.
-const publicEventId = "d3228167-5500-4a72-bda0-2f7249a938aa";
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, x-event-token, x-job-token, x-job-lease, apikey", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Cache-Control": "no-store" };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -91,10 +89,8 @@ Deno.serve(async (req) => {
 
     if (path === "/guest/submit" && req.method === "POST") {
       const eventToken = req.headers.get("x-event-token") || "";
-      const event = eventToken
-        ? await getEvent(eventToken, "guest")
-        : check(await db.from("photo_finder_events").select("id,name").eq("id", publicEventId).eq("active", true).maybeSingle());
-      if (!event) fail("Event unavailable", 404);
+      if (!eventToken) fail("Scan the event QR code to access photos", 401);
+      const event = await getEvent(eventToken, "guest");
       const jobId = crypto.randomUUID(), jobSecret = token(), selfiePath = `selfies/${jobId}`;
       const reserved = await db.rpc("photo_finder_reserve_job", { p_event_id: event.id, p_job_id: jobId, p_guest_token_hash: await hash(jobSecret), p_selfie_path: selfiePath });
       if (reserved.error) throw reserved.error;
@@ -112,6 +108,20 @@ Deno.serve(async (req) => {
         throw error;
       }
       return json({ job_id: jobId, job_token: jobSecret, event_name: event.name });
+    }
+
+    if (path === "/guest/showcase" && req.method === "GET") {
+      const event = await getEvent(req.headers.get("x-event-token") || "", "guest");
+      const rows = check(await db.from("photo_finder_showcases")
+        .select("photo_id,filename,object_path")
+        .eq("event_id", event.id)
+        .order("photo_id", { ascending: false })
+        .limit(3));
+      const photos = await Promise.all((rows || []).map(async (row) => {
+        const signed = check(await db.storage.from(bucket).createSignedUrl(row.object_path, 300));
+        return { id: row.photo_id, filename: row.filename, url: signed.signedUrl };
+      }));
+      return json({ event_name: event.name, photos });
     }
 
     const guestMatch = path.match(/^\/guest\/jobs\/([0-9a-f-]+)(?:\/photos\/([0-9a-f-]+))?$/i);
@@ -144,6 +154,67 @@ Deno.serve(async (req) => {
         } else if (existing.data.public) {
           fail("Storage bucket must be private", 500);
         }
+        return json({ ok: true });
+      }
+      if (path === "/worker/showcase" && req.method === "GET") {
+        const rows = check(await db.from("photo_finder_showcases")
+          .select("photo_id")
+          .eq("event_id", event.id)
+          .order("photo_id"));
+        return json({ event_name: event.name, photo_ids: (rows || []).map((row) => row.photo_id) });
+      }
+      if (path === "/worker/showcase" && req.method === "POST") {
+        const payload = await req.json() as {
+          event_name?: unknown;
+          photo_ids?: unknown;
+        } | null;
+        const photoIds = payload?.photo_ids;
+        if (payload?.event_name !== event.name || !Array.isArray(photoIds) ||
+            photoIds.length > 3 ||
+            photoIds.some((id: unknown) =>
+              typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0
+            ) ||
+            new Set(photoIds).size !== photoIds.length) {
+          fail("Invalid showcase manifest");
+        }
+        const keep = photoIds as number[];
+        const existing = check(await db.from("photo_finder_showcases")
+          .select("photo_id,object_path")
+          .eq("event_id", event.id));
+        const stale = (existing || []).filter((row) => !keep.includes(row.photo_id));
+        if (stale.length) {
+          check(await db.storage.from(bucket).remove(stale.map((row) => row.object_path)));
+          check(await db.from("photo_finder_showcases")
+            .delete()
+            .eq("event_id", event.id)
+            .in("photo_id", stale.map((row) => row.photo_id)));
+        }
+        return json({ ok: true });
+      }
+      const showcaseUpload = path.match(/^\/worker\/showcase\/(\d+)$/);
+      if (showcaseUpload && req.method === "POST") {
+        const photoId = Number(showcaseUpload[1]);
+        const form = await readForm(req, 2 * 1024 * 1024);
+        const photo = form.get("photo");
+        const eventName = form.get("event_name");
+        if (!Number.isSafeInteger(photoId) || photoId <= 0 ||
+            eventName !== event.name ||
+            !(photo instanceof File) || photo.type !== "image/webp" ||
+            photo.size < 1 || photo.size > 2 * 1024 * 1024) {
+          fail("Invalid showcase photo");
+        }
+        const objectPath = `showcases/${event.id}/${photoId}.webp`;
+        check(await db.storage.from(bucket).upload(objectPath, photo, {
+          contentType: "image/webp",
+          upsert: true,
+        }));
+        check(await db.from("photo_finder_showcases").upsert({
+          event_id: event.id,
+          photo_id: photoId,
+          object_path: objectPath,
+          filename: photo.name,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "event_id,photo_id" }));
         return json({ ok: true });
       }
       if (path === "/worker/claim" && req.method === "POST") {

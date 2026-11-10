@@ -25,6 +25,28 @@ The migration creates the private relay tables, row-level security, rate-limit
 reservation function, and an inactive `Candid Test` event. The relay worker
 creates the private Storage bucket when it starts.
 
+Run the showcase migration
+[`20261110160000_create_private_event_showcases.sql`](../supabase/migrations/20261110160000_create_private_event_showcases.sql)
+as well. The laptop worker synchronizes up to three recent photos from the
+event's local folder to the private bucket every minute. Guests must open the
+event QR link; the opaque QR token resolves to the event on the server, and
+preview images are served through short-lived signed URLs. The event folder
+name is not used as a credential or exposed in the QR URL.
+
+For each additional event, create a matching local event and folder, then add
+an active `photo_finder_events` row whose `name` exactly matches that folder.
+Store that event's guest token and worker secret in a separate ignored file
+(for example `.env.wedding`); use the SHA-256 hashes in the database, and keep
+the raw tokens only in the QR link and local secrets file. Start a worker for
+each event with its local ID and secrets file, such as:
+
+```powershell
+.\venv\Scripts\python.exe -m app.services.relay_worker --event-id 4 --secrets-file .env.wedding --relay-url https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay
+```
+
+The guest website now requires a valid event QR token for photo searches as
+well as previews; the direct public-event fallback is disabled.
+
 Before enabling the event, set its token hashes from the local `.env.relay`
 file. From the repository root, this command prints hashes only (not the
 secrets):
