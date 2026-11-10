@@ -20,11 +20,13 @@ from fastapi import (
     HTTPException,
     UploadFile,
     File,
-    Query
+    Query,
+    Header
 )
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from jose import jwt
+from jose import jwt, JWTError
+from fastapi.security import HTTPAuthorizationCredentials
 
 from app.database.db import get_db
 from app.database.models import (
@@ -35,7 +37,7 @@ from app.database.models import (
     GuestAccess
 )
 from app.dependencies.auth import get_current_admin
-from app.dependencies.guest import get_current_guest
+from app.dependencies.guest import get_current_guest, guest_bearer
 from app.core.config import (
     JWT_SECRET_KEY,
     JWT_ALGORITHM
@@ -368,6 +370,7 @@ def create_guest_session(
         "type": "guest",
         "event_id": access.event_id,
         "guest_access_id": access.id,
+        "jti": secrets.token_urlsafe(24),
         "exp": expires_at
     }
 
@@ -405,11 +408,13 @@ async def guest_photo_search(
 
     min_similarity: float = Query(
         default=POSSIBLE_MATCH_THRESHOLD,
-        ge=-1.0,
+        ge=POSSIBLE_MATCH_THRESHOLD,
         le=1.0
     ),
 
     guest_access: GuestAccess = Depends(get_current_guest),
+
+    credentials: HTTPAuthorizationCredentials = Depends(guest_bearer),
 
     db: Session = Depends(get_db)
 ):
@@ -465,6 +470,9 @@ async def guest_photo_search(
                 status_code=422,
                 detail="No face detected in uploaded image."
             )
+
+        if total_faces != 1:
+            raise HTTPException(status_code=422, detail="Please use a selfie with exactly one face.")
 
         event_id = guest_access.event_id
 
@@ -540,6 +548,12 @@ async def guest_photo_search(
                 result["similarity"],
                 4
             )
+            session = decode_access_token(credentials.credentials)
+            result["photo_token"] = jwt.encode({
+                "type": "matched_photo", "photo_id": result["photo_id"],
+                "event_id": event_id, "guest_access_id": guest_access.id,
+                "session_id": session.get("jti"), "exp": session["exp"]
+            }, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
         return {
             "event_id": event_id,
@@ -554,6 +568,39 @@ async def guest_photo_search(
 
         if temp_path.exists():
             temp_path.unlink()
+
+
+@router.get("/api/guest/photos/{photo_id}")
+def get_guest_photo(
+    photo_id: int,
+    photo_token: str = Header(..., alias="X-Photo-Token"),
+    download: bool = False,
+    guest_access: GuestAccess = Depends(get_current_guest),
+    credentials: HTTPAuthorizationCredentials = Depends(guest_bearer),
+    db: Session = Depends(get_db),
+):
+    try:
+        grant = decode_access_token(photo_token)
+        session = decode_access_token(credentials.credentials)
+        if (grant.get("type") != "matched_photo" or grant.get("photo_id") != photo_id
+                or grant.get("event_id") != guest_access.event_id
+                or grant.get("guest_access_id") != guest_access.id
+                or not session.get("jti") or grant.get("session_id") != session["jti"]):
+            raise ValueError("Invalid photo grant")
+    except (JWTError, ValueError, KeyError):
+        raise HTTPException(status_code=403, detail="Photo access denied.")
+
+    photo = db.query(Photo).filter(Photo.id == photo_id, Photo.event_id == guest_access.event_id).first()
+    event = db.query(Event).filter(Event.id == guest_access.event_id).first()
+    if photo is None or event is None:
+        raise HTTPException(status_code=404, detail="Photo not found.")
+    path = Path(photo.file_path).resolve()
+    root = (Path("storage/events") / event.event_name).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Photo not found.")
+    return FileResponse(path, filename=photo.filename,
+                        content_disposition_type="attachment" if download else "inline",
+                        headers={"Cache-Control": "private, no-store"})
 
 
 @router.get("/guest", include_in_schema=False)

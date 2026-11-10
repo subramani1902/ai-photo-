@@ -181,6 +181,18 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
+.match-photo {
+    width: 100%;
+    max-height: 360px;
+    object-fit: contain;
+    border-radius: 8px;
+    margin-bottom: 12px;
+}
+
+.match-card button {
+    margin-top: 14px;
+}
+
 .match-card small {
     color: #718078;
 }
