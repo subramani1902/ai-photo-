@@ -3,12 +3,14 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
+import cv2
 import numpy as np
 
 from app.api.photos import is_duplicate
 from app.ai.face_engine import (
     prepare_image_for_processing,
 )
+from app.services.relay_worker import prepare_photo_for_transfer
 
 
 class FacePreprocessingTests(unittest.TestCase):
@@ -37,3 +39,23 @@ class FacePreprocessingTests(unittest.TestCase):
                 self.assertFalse(is_duplicate(db, 1, "new photo hash", 8))
 
             cached_hash.assert_not_called()
+            cached_hash.assert_not_called()
+    def test_guest_transfer_uses_compressed_copy_and_keeps_original(self):
+        image = np.full((800, 1200, 3), 120, dtype=np.uint8)
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "original.jpg"
+            transfer = Path(directory) / "transfer.jpg"
+            self.assertTrue(
+                cv2.imwrite(
+                    str(source),
+                    image,
+                    [cv2.IMWRITE_JPEG_QUALITY, 100]
+                )
+            )
+            original = source.read_bytes()
+
+            prepare_photo_for_transfer(source, transfer)
+
+            self.assertEqual(source.read_bytes(), original)
+            self.assertTrue(transfer.is_file())
+            self.assertLess(transfer.stat().st_size, source.stat().st_size)

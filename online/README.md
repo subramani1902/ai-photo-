@@ -87,6 +87,8 @@ detection. The camera importer sends up to 20 photos per batch so the face
 search index is rebuilt once per batch instead of once per photo. The local
 face engine uses the NVIDIA CUDA provider when available and falls back to CPU.
 Install dependencies from `requirements.txt` before starting the importer.
+For guest results, originals larger than 8 MB are converted to high-quality
+JPEG copies up to 4096 pixels before transfer; the local originals are retained.
 
 ## Prototype limits
 

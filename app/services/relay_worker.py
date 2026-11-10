@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+import cv2
+import numpy as np
 import requests
 from dotenv import load_dotenv
 
@@ -20,6 +22,35 @@ from app.services.remote_matching import find_event_matches
 
 LOG = logging.getLogger(__name__)
 MAX_SELFIE_BYTES = 20 * 1024 * 1024
+MAX_RESULT_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_RESULT_DIMENSION = 4096
+RESULT_JPEG_QUALITY = 90
+
+
+def prepare_photo_for_transfer(source_path, output_path):
+    image = cv2.imread(str(source_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Unable to prepare a matched photo for delivery.")
+
+    height, width = image.shape[:2]
+    largest_dimension = max(height, width)
+    if largest_dimension > MAX_RESULT_DIMENSION:
+        scale = MAX_RESULT_DIMENSION / largest_dimension
+        image = cv2.resize(
+            image,
+            (round(width * scale), round(height * scale)),
+            interpolation=cv2.INTER_AREA
+        )
+
+    success, encoded = cv2.imencode(
+        ".jpg",
+        image,
+        [cv2.IMWRITE_JPEG_QUALITY, RESULT_JPEG_QUALITY]
+    )
+    if not success:
+        raise ValueError("Unable to prepare a matched photo for delivery.")
+    Path(output_path).write_bytes(encoded.tobytes())
+    return Path(output_path)
 
 
 class RelayWorker:
@@ -95,12 +126,20 @@ class RelayWorker:
                     if time.monotonic() - last_heartbeat >= 30:
                         self.request("POST", f"/worker/jobs/{job_id}/heartbeat", headers=headers, retry_safe=True)
                         last_heartbeat = time.monotonic()
-                    with match["path"].open("rb") as photo:
+                    source_path = Path(match["path"])
+                    if source_path.stat().st_size > MAX_RESULT_SOURCE_BYTES:
+                        transfer_path = prepare_photo_for_transfer(
+                            source_path,
+                            Path(directory) / f"{match['photo_id']}.jpg"
+                        )
+                    else:
+                        transfer_path = source_path
+                    with transfer_path.open("rb") as photo:
                         self.request("POST", f"/worker/jobs/{job_id}/results", headers=headers, retry_safe=True,
                                      data={"photo_id": str(match["photo_id"]),
                                            "similarity": str(match["similarity"])},
-                                     files={"photo": (match["filename"], photo,
-                                                      mimetypes.guess_type(match["filename"])[0] or "application/octet-stream")})
+                                     files={"photo": (transfer_path.name if transfer_path != source_path else match["filename"], photo,
+                                                      mimetypes.guess_type(transfer_path.name)[0] or "application/octet-stream")})
                 self.request("POST", f"/worker/jobs/{job_id}/complete", headers=headers, retry_safe=True)
                 LOG.info("Finished request %s with %d matches", job_id, len(matches))
         except ValueError as exc:
