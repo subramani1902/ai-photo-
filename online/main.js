@@ -1,4 +1,4 @@
-const RELAY = "https://ifudnqcgvqafhzazqlku.supabase.co/functions/v1/relay";
+const RELAY = "https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay";
 const MAX_SELFIE_BYTES = 10 * 1024 * 1024;
 const currentUrl = new URL(location.href);
 const eventToken = new URLSearchParams(currentUrl.hash.slice(1)).get("token") || currentUrl.searchParams.get("token");

@@ -1,0 +1,4 @@
+project_id = "dtfxnuxluuwvjdcyxmnc"
+
+[functions.relay]
+verify_jwt = false
