@@ -6,6 +6,8 @@ The relay worker is responsible for authorizing requests and transferring files.
 
 from pathlib import Path
 
+from sqlalchemy import func
+
 from app.database.db import SessionLocal
 from app.database.models import Event, Face, Photo
 from app.ai.face_engine import FaceEngine
@@ -66,6 +68,15 @@ def find_event_matches(event_id, selfie_path, *, engine=None, min_similarity=0.6
                     "path": path,
                     "similarity": float(match["similarity"]),
                 }
+        if results:
+            face_counts = dict(
+                db.query(Face.photo_id, func.count(Face.id))
+                .filter(Face.photo_id.in_(results))
+                .group_by(Face.photo_id)
+                .all()
+            )
+            for photo_id, result in results.items():
+                result["face_count"] = face_counts.get(photo_id, 1)
         return list(results.values())
     finally:
         db.close()

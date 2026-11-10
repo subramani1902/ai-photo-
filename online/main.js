@@ -13,6 +13,8 @@ let selectedSelfie = null, cameraStream = null, cameraPreviewUrl = null;
 const selectedPhotoIndexes = new Set();
 let downloadedCount = 0;
 let galleryPhotoCount = 0, settledPhotoCount = 0;
+let galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
+let activeCategory = "all";
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
 let selectedEventId = "";
@@ -191,6 +193,28 @@ document.querySelectorAll(".view-button").forEach(button => button.addEventListe
     item.setAttribute("aria-pressed", String(active));
   });
 }));
+
+function updateCategoryFilter(category) {
+  activeCategory = category;
+  document.querySelectorAll(".category-filter").forEach(button => {
+    const active = button.dataset.category === category;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const visibleCount = galleryCategoryCounts[category];
+  $("#gallery-count").textContent = String(visibleCount);
+  photos.querySelectorAll(".result").forEach(card => {
+    card.hidden = category !== "all" && card.dataset.category !== category;
+  });
+  const empty = $("#empty");
+  empty.hidden = visibleCount > 0;
+  empty.textContent = galleryCategoryCounts.all
+    ? `No matching ${category} photos were found.`
+    : "No matching photos found yet. Try a clear photo of your face, or check back after more event photos are added.";
+}
+document.querySelectorAll(".category-filter").forEach(button => {
+  button.addEventListener("click", () => updateCategoryFilter(button.dataset.category));
+});
 
 async function request(path, options = {}) {
   let response;
@@ -391,6 +415,7 @@ $("#preview-download").addEventListener("click", () => { if (selectedPhoto) down
 
 async function renderPhoto(photo, job, headers, index) {
   const card = document.createElement("article"); card.className = "result";
+  card.dataset.category = Number(photo.face_count) > 1 ? "group" : "candid";
   const open = document.createElement("button"); open.className = "photo-open"; open.disabled = true;
   open.setAttribute("aria-label", "View " + photo.filename);
   const image = document.createElement("img"); image.className = "photo"; image.alt = ""; image.loading = "lazy";
@@ -464,14 +489,23 @@ search.addEventListener("click", async () => {
     downloadedCount = 0;
     galleryPhotoCount = status.photos.length;
     settledPhotoCount = 0;
+    galleryCategoryCounts = {
+      all: galleryPhotoCount,
+      candid: status.photos.filter(photo => Number(photo.face_count) === 1).length,
+      group: status.photos.filter(photo => Number(photo.face_count) > 1).length,
+    };
+    document.querySelectorAll(".category-filter").forEach(button => {
+      button.querySelector("[data-category-count]").textContent = galleryCategoryCounts[button.dataset.category];
+    });
+    updateCategoryFilter("all");
     $("#download-status").textContent = "Downloaded 0 photos";
     $("#download-all").disabled = true;
     $("#download-all").textContent = "Download all (.zip) ↓";
     updateSelectionControls();
     const count = status.photos.length;
-    $("#summary").textContent = count ? `We found ${count} photo${count === 1 ? "" : "s"} of you.` : "No photos found this time.";
-    $("#gallery-count").textContent = count;
-    $("#empty").hidden = count !== 0;
+    $("#summary").textContent = count
+      ? `We found ${count} photo${count === 1 ? "" : "s"}: ${galleryCategoryCounts.candid} candid · ${galleryCategoryCounts.group} group.`
+      : "No photos found this time.";
     message.textContent = "";
     status.photos.forEach((photo, index) => { void renderPhoto(photo, job, headers, index); });
     updateSelectionControls();
@@ -484,6 +518,8 @@ $("#again").addEventListener("click", () => {
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
   galleryPhotoCount = 0; settledPhotoCount = 0;
+  galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
+  updateCategoryFilter("all");
   $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";
   updateSelectionControls();
   $("#gallery-action-bar").hidden = true;

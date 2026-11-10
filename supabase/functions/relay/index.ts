@@ -151,16 +151,47 @@ Deno.serve(async (req) => {
         if (rows.length < 3) rows.push(row);
         rowsByEvent.set(row.event_id, rows);
       }
-      const publicEvents = await Promise.all(events.map(async (event) => ({
-          id: event.id,
-          name: event.name,
-          photos: await Promise.all((rowsByEvent.get(event.id) || []).map(async (row) => {
-            const signed = check(await db.storage.from(bucket).createSignedUrl(row.object_path, 300))
-              ?? fail("Preview unavailable", 500);
-            return { id: row.photo_id, filename: row.filename, url: signed.signedUrl };
-          })),
-        })));
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!.replace(/\/+$/, "");
+      const relayBase = `${supabaseUrl}/functions/v1/relay`;
+      const publicEvents = events.map((event) => ({
+        id: event.id,
+        name: event.name,
+        photos: (rowsByEvent.get(event.id) || []).map((row) => ({
+          id: row.photo_id,
+          filename: row.filename,
+          url: `${relayBase}/guest/showcase/${event.id}/${row.photo_id}`,
+        })),
+      }));
       return json({ events: publicEvents });
+    }
+
+    const showcasePhotoMatch = path.match(/^\/guest\/showcase\/([0-9a-f-]{36})\/(\d+)$/i);
+    if (showcasePhotoMatch && req.method === "GET") {
+      if (!uuid.test(showcasePhotoMatch[1])) fail("Preview unavailable", 404);
+      const event = check(await db.from("photo_finder_events")
+        .select("id")
+        .eq("id", showcasePhotoMatch[1])
+        .eq("active", true)
+        .maybeSingle());
+      const activeEvent = event ?? fail("Preview unavailable", 404);
+      const photoId = Number(showcasePhotoMatch[2]);
+      if (!Number.isSafeInteger(photoId) || photoId <= 0) fail("Preview unavailable", 404);
+      const preview = check(await db.from("photo_finder_showcases")
+        .select("object_path")
+        .eq("event_id", activeEvent.id)
+        .eq("photo_id", photoId)
+        .maybeSingle());
+      const activePreview = preview ?? fail("Preview unavailable", 404);
+      const image = check(await db.storage.from(bucket).download(activePreview.object_path));
+      if (!image) fail("Preview unavailable", 404);
+      return new Response(image, {
+        headers: {
+          ...cors,
+          "Cache-Control": "public, max-age=300",
+          "Content-Type": "image/webp",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
     }
 
     const guestMatch = path.match(/^\/guest\/jobs\/([0-9a-f-]+)(?:\/photos\/([0-9a-f-]+))?$/i);
@@ -174,7 +205,7 @@ Deno.serve(async (req) => {
           ?? fail("Photo not found", 404);
         return new Response(blob, { headers: { ...cors, "Content-Type": blob.type || "application/octet-stream", "X-Content-Type-Options": "nosniff" } });
       }
-      const photos = job.status === "completed" ? check(await db.from("photo_finder_results").select("id,filename,similarity").eq("job_id", job.id).eq("uploaded", true).order("similarity", { ascending: false })) : [];
+      const photos = job.status === "completed" ? check(await db.from("photo_finder_results").select("id,filename,similarity,face_count").eq("job_id", job.id).eq("uploaded", true).order("similarity", { ascending: false })) : [];
       return json({ status: job.status, message: job.error_message, photos });
     }
 
@@ -305,11 +336,12 @@ Deno.serve(async (req) => {
       }
       if (match![2] === "results" && req.method === "POST") {
         const form = await readForm(req, 51 * 1024 * 1024), photoEntry = form.get("photo"), photoId = form.get("photo_id"), similarity = Number(form.get("similarity"));
+        const faceCount = form.has("face_count") ? Number(form.get("face_count")) : 1;
         const photo = photoEntry instanceof File ? photoEntry : fail("Invalid result");
-        if (photo.size < 1 || photo.size > 50 * 1024 * 1024 || !/^\d+$/.test(String(photoId)) || !Number.isFinite(similarity) || similarity < 0.45 || similarity > 1.001) fail("Invalid result");
+        if (photo.size < 1 || photo.size > 50 * 1024 * 1024 || !/^\d+$/.test(String(photoId)) || !Number.isFinite(similarity) || similarity < 0.45 || similarity > 1.001 || !Number.isSafeInteger(faceCount) || faceCount < 1) fail("Invalid result");
         const objectPath = `results/${job.id}/${photoId}`;
         await workerJob(event.id, job.id, job.lease_id);
-        check(await db.from("photo_finder_results").upsert({ job_id: job.id, photo_id: Number(photoId), object_path: objectPath, filename: photo.name, similarity, uploaded: false }, { onConflict: "job_id,photo_id" }));
+        check(await db.from("photo_finder_results").upsert({ job_id: job.id, photo_id: Number(photoId), object_path: objectPath, filename: photo.name, similarity, face_count: faceCount, uploaded: false }, { onConflict: "job_id,photo_id" }));
         check(await db.storage.from(bucket).upload(objectPath, photo, { contentType: photo.type || "application/octet-stream", upsert: true }));
         await workerJob(event.id, job.id, job.lease_id);
         check(await db.from("photo_finder_results").update({ uploaded: true }).eq("job_id", job.id).eq("photo_id", Number(photoId)));

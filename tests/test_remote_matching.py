@@ -10,7 +10,7 @@ from app.services.remote_matching import find_event_matches
 
 
 class RemoteMatchingTests(unittest.TestCase):
-    def test_matches_load_photo_records_with_one_query(self):
+    def test_matches_include_the_number_of_detected_faces(self):
         original_directory = Path.cwd()
         with TemporaryDirectory() as directory:
             os.chdir(directory)
@@ -37,8 +37,13 @@ class RemoteMatchingTests(unittest.TestCase):
                     (SimpleNamespace(id=12), first_photo),
                     (SimpleNamespace(id=13), second_photo),
                 ]
+                face_count_query = Mock()
+                face_count_query.filter.return_value.group_by.return_value.all.return_value = [
+                    (1, 3),
+                    (2, 1),
+                ]
                 db = Mock()
-                db.query.side_effect = [event_query, photo_query]
+                db.query.side_effect = [event_query, photo_query, face_count_query]
 
                 index = Mock()
                 index.index.ntotal = 3
@@ -66,7 +71,8 @@ class RemoteMatchingTests(unittest.TestCase):
                     [(match["photo_id"], match["similarity"]) for match in matches],
                     [(1, 0.86), (2, 0.62)],
                 )
-                self.assertEqual(db.query.call_count, 2)
+                self.assertEqual([match["face_count"] for match in matches], [3, 1])
+                self.assertEqual(db.query.call_count, 3)
                 photo_query.join.return_value.filter.return_value.all.assert_called_once()
             finally:
                 os.chdir(original_directory)

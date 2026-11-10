@@ -61,6 +61,14 @@ Anyone can open `https://ai-photo-k5fu.vercel.app`, select an active event by
 its folder name, and submit a selfie search. As imported photos are indexed,
 the worker refreshes that event's three most recent previews automatically.
 QR links remain supported as an optional way to open one specific event.
+Search results can be filtered into Candid (one detected face) and Group (two
+or more detected faces). Photos without a detected face are not candidates for
+selfie matching.
+
+To enable these result categories on an existing relay, apply
+[`20261110170000_add_result_face_count.sql`](../supabase/migrations/20261110170000_add_result_face_count.sql),
+deploy the relay function, redeploy the static website, and restart the event
+worker so it reports each matched photo's detected face count.
 
 Before enabling the event, set its token hashes from the local `.env.relay`
 file. From the repository root, this command prints hashes only (not the

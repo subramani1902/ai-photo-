@@ -80,6 +80,11 @@
     <section id="results" class="results" hidden>
       <div class="eyebrow"><span></span> YOUR EVENT GALLERY</div>
       <div class="results-head"><div><h1>Your <em>moments.</em></h1><p id="summary"></p></div><button id="again" class="text-button">New search ↗</button></div>
+      <div id="category-filters" class="category-filters" role="group" aria-label="Filter photos by category">
+        <button class="category-filter active" type="button" data-category="all" aria-pressed="true">All <span data-category-count></span></button>
+        <button class="category-filter" type="button" data-category="candid" aria-pressed="false">Candid <span data-category-count></span></button>
+        <button class="category-filter" type="button" data-category="group" aria-pressed="false">Group <span data-category-count></span></button>
+      </div>
       <div class="gallery-toolbar"><div><span class="gallery-title">Your photos</span><span id="gallery-count" class="gallery-count"></span></div><div class="view-controls" role="group" aria-label="Photo layout">
         <button class="view-button active" data-view="large" aria-label="Large grid" aria-pressed="true" title="Large grid"><span class="icon-large" aria-hidden="true"><i></i><i></i><i></i><i></i></span></button>
         <button class="view-button" data-view="compact" aria-label="Compact grid" aria-pressed="false" title="Compact grid"><span class="icon-compact" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></button>

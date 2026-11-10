@@ -164,3 +164,10 @@ body.scanning #message{visibility:hidden}
 .scan-overlay #loading-status{font-size:14px;line-height:1.5;color:var(--green)}
 .scan-note{font-size:12px;color:var(--muted);margin-top:12px}
 .scan-overlay .text-button{padding:10px;min-height:44px}
+.category-filters{display:flex;flex-wrap:wrap;gap:8px;margin-top:27px}
+.category-filter{min-height:40px;padding:8px 14px;border:1px solid var(--line);border-radius:999px;background:#fff;color:#607267;font-size:12px;font-weight:700}
+.category-filter span{margin-left:5px;color:#8b9c8d}
+.category-filter.active{border-color:var(--green);background:var(--green);color:#fff}
+.category-filter.active span{color:#d8e6db}
+.category-filter:focus-visible{outline:3px solid #c89157;outline-offset:3px}
+@media(max-width:600px){.category-filters{margin-top:21px}}

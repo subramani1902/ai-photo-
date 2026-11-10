@@ -235,6 +235,7 @@ class RelayWorker:
                                 data={
                                     "photo_id": str(match["photo_id"]),
                                     "similarity": str(match["similarity"]),
+                                    "face_count": str(match["face_count"]),
                                 },
                                 files={
                                     "photo": (
