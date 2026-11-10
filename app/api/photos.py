@@ -50,7 +50,7 @@ ALLOWED_EXTENSIONS = {
     ".webp"
 }
 
-MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_FILE_SIZE = 100 * 1024 * 1024
 MAX_FILES_PER_UPLOAD = 100
 
 EVENT_STORAGE = Path("storage/events")
@@ -349,7 +349,7 @@ async def upload_event_photos(
 
                     continue
 
-                # Read maximum 50 MB + 1 byte
+                # Read maximum 100 MB + 1 byte
 
                 content = await upload.read(
                     MAX_FILE_SIZE + 1
@@ -376,7 +376,7 @@ async def upload_event_photos(
                     uploaded_results.append({
                         "filename": original_filename,
                         "status": "failed",
-                        "message": "File exceeds 50 MB."
+                        "message": "File exceeds 100 MB."
                     })
 
                     continue

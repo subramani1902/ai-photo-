@@ -4,6 +4,24 @@ import numpy as np
 from insightface.app import FaceAnalysis
 
 
+MAX_PROCESSING_DIMENSION = 4096
+
+
+def prepare_image_for_processing(image, max_dimension=MAX_PROCESSING_DIMENSION):
+    height, width = image.shape[:2]
+    largest_dimension = max(height, width)
+    if largest_dimension <= max_dimension:
+        return image
+
+    scale = max_dimension / largest_dimension
+    resized = cv2.resize(
+        image,
+        (round(width * scale), round(height * scale)),
+        interpolation=cv2.INTER_AREA
+    )
+    return resized
+
+
 class FaceEngine:
 
     def __init__(self):
@@ -174,7 +192,7 @@ class FaceEngine:
                 f"Unable to read image: {image_path}"
             )
 
-        original_image = image.copy()
+        image = prepare_image_for_processing(image)
 
         detected_faces = self.model.get(
             image
@@ -207,7 +225,7 @@ class FaceEngine:
             # ------------------------------------------
 
             quality = self.assess_face_quality(
-                original_image,
+                image,
                 bbox
             )
 

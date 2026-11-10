@@ -54,7 +54,9 @@ an `OPTIONS` request before redeploying the Vercel frontend.
 
 This directory is a static website. In the Vercel project settings, set
 **Root Directory** to `online` and leave the Build Command empty. Redeploy after
-changing the setting. Do not deploy from the repository root: its
+changing the setting. `vercel.json` selects Vercel's `Other` framework and
+disables the Python build commands for deployments from this directory. Do not
+deploy from the repository root: its
 `requirements.txt` and FastAPI app cause Vercel to build a Python function and
 bundle the computer-vision dependencies, exceeding Vercel's function-size
 limit. With `online` as the root, the deployment contains only this directory's
@@ -78,8 +80,11 @@ In a second terminal, start the relay worker:
 
 The ignored `.env.relay` file must contain the test event and worker secrets.
 Keep it private and never commit it. The worker and the laptop's internet
-connection must stay on. The web page accepts selfies up to 10 MB; event photos
-over 50 MB are skipped by the importer and reported in its log.
+connection must stay on. The web page accepts selfies up to 10 MB; event photo
+imports accept files up to 100 MB. Originals are stored unchanged, while images
+over 4096 pixels on their longest edge are downscaled only in memory for face
+detection. The camera importer sends up to 10 photos per batch so the face
+search index is rebuilt once per batch instead of once per photo.
 
 ## Prototype limits
 
