@@ -6,7 +6,7 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
   auth: { persistSession: false, autoRefreshToken: false },
 });
 const bucket = "photo-finder-private";
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, x-event-token, x-job-token, x-job-lease, apikey", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Cache-Control": "no-store" };
+const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, x-event-token, x-event-id, x-job-token, x-job-lease, apikey", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Cache-Control": "no-store" };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))).map((b) => b.toString(16).padStart(2, "0")).join("");
 const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32))).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -28,7 +28,13 @@ async function readForm(req: Request, limit: number) {
     if (total > limit) { await reader!.cancel(); fail("Upload is too large", 413); }
     chunks.push(value);
   }
-  const body = new Blob(chunks);
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  const body = new Blob([bytes.buffer]);
   return new Request("https://internal.invalid", { method: "POST", headers: { "Content-Type": req.headers.get("content-type") || "" }, body }).formData();
 }
 
@@ -89,16 +95,30 @@ Deno.serve(async (req) => {
 
     if (path === "/guest/submit" && req.method === "POST") {
       const eventToken = req.headers.get("x-event-token") || "";
-      if (!eventToken) fail("Scan the event QR code to access photos", 401);
-      const event = await getEvent(eventToken, "guest");
+      const eventId = req.headers.get("x-event-id") || "";
+      let event: { id: string; name: string } | null;
+      if (eventToken) {
+        event = await getEvent(eventToken, "guest");
+      } else {
+        if (!uuid.test(eventId)) fail("Choose an event to search", 400);
+        event = check(await db.from("photo_finder_events")
+          .select("id,name")
+          .eq("id", eventId)
+          .eq("active", true)
+          .maybeSingle());
+      }
+      const activeEvent = event ?? fail("Event unavailable", 404);
       const jobId = crypto.randomUUID(), jobSecret = token(), selfiePath = `selfies/${jobId}`;
-      const reserved = await db.rpc("photo_finder_reserve_job", { p_event_id: event.id, p_job_id: jobId, p_guest_token_hash: await hash(jobSecret), p_selfie_path: selfiePath });
+      const reserved = await db.rpc("photo_finder_reserve_job", { p_event_id: activeEvent.id, p_job_id: jobId, p_guest_token_hash: await hash(jobSecret), p_selfie_path: selfiePath });
       if (reserved.error) throw reserved.error;
       if (!reserved.data) fail("Too many requests. Please try again shortly.", 429);
       try {
         const form = await readForm(req, 11 * 1024 * 1024);
-        const file = form.get("file");
-        if (!(file instanceof File) || !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size < 1 || file.size > 10 * 1024 * 1024) fail("Upload a JPG, PNG or WEBP image under 10 MB.");
+        const fileEntry = form.get("file");
+        const file = fileEntry instanceof File
+          ? fileEntry
+          : fail("Upload a JPG, PNG or WEBP image under 10 MB.");
+        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size < 1 || file.size > 10 * 1024 * 1024) fail("Upload a JPG, PNG or WEBP image under 10 MB.");
         check(await db.storage.from(bucket).upload(selfiePath, file, { contentType: file.type, upsert: false }));
         check(await db.from("photo_finder_jobs").update({ status: "pending" }).eq("id", jobId).eq("status", "uploading"));
       } catch (error) {
@@ -107,21 +127,40 @@ Deno.serve(async (req) => {
         await db.storage.from(bucket).remove([selfiePath]);
         throw error;
       }
-      return json({ job_id: jobId, job_token: jobSecret, event_name: event.name });
+      return json({ job_id: jobId, job_token: jobSecret, event_name: activeEvent.name });
     }
 
     if (path === "/guest/showcase" && req.method === "GET") {
-      const event = await getEvent(req.headers.get("x-event-token") || "", "guest");
-      const rows = check(await db.from("photo_finder_showcases")
-        .select("photo_id,filename,object_path")
-        .eq("event_id", event.id)
-        .order("photo_id", { ascending: false })
-        .limit(3));
-      const photos = await Promise.all((rows || []).map(async (row) => {
-        const signed = check(await db.storage.from(bucket).createSignedUrl(row.object_path, 300));
-        return { id: row.photo_id, filename: row.filename, url: signed.signedUrl };
-      }));
-      return json({ event_name: event.name, photos });
+      const eventToken = req.headers.get("x-event-token") || "";
+      const events = eventToken
+        ? [await getEvent(eventToken, "guest")]
+        : check(await db.from("photo_finder_events")
+          .select("id,name")
+          .eq("active", true)
+          .order("name")
+          .limit(50));
+      if (!events?.length) return json({ events: [] });
+
+      const showcaseRows = check(await db.from("photo_finder_showcases")
+        .select("event_id,photo_id,filename,object_path")
+        .in("event_id", events.map((event) => event.id))
+        .order("photo_id", { ascending: false }));
+      const rowsByEvent = new Map<string, Array<{ photo_id: number; filename: string; object_path: string }>>();
+      for (const row of showcaseRows || []) {
+        const rows = rowsByEvent.get(row.event_id) || [];
+        if (rows.length < 3) rows.push(row);
+        rowsByEvent.set(row.event_id, rows);
+      }
+      const publicEvents = await Promise.all(events.map(async (event) => ({
+          id: event.id,
+          name: event.name,
+          photos: await Promise.all((rowsByEvent.get(event.id) || []).map(async (row) => {
+            const signed = check(await db.storage.from(bucket).createSignedUrl(row.object_path, 300))
+              ?? fail("Preview unavailable", 500);
+            return { id: row.photo_id, filename: row.filename, url: signed.signedUrl };
+          })),
+        })));
+      return json({ events: publicEvents });
     }
 
     const guestMatch = path.match(/^\/guest\/jobs\/([0-9a-f-]+)(?:\/photos\/([0-9a-f-]+))?$/i);
@@ -131,7 +170,8 @@ Deno.serve(async (req) => {
         if (job.status !== "completed" || !uuid.test(guestMatch[2])) fail("Photo not available", 404);
         const photo = check(await db.from("photo_finder_results").select("object_path,filename").eq("id", guestMatch[2]).eq("job_id", job.id).eq("uploaded", true).maybeSingle());
         if (!photo) fail("Photo not found", 404);
-        const blob = check(await db.storage.from(bucket).download(photo!.object_path));
+        const blob = check(await db.storage.from(bucket).download(photo!.object_path))
+          ?? fail("Photo not found", 404);
         return new Response(blob, { headers: { ...cors, "Content-Type": blob.type || "application/octet-stream", "X-Content-Type-Options": "nosniff" } });
       }
       const photos = job.status === "completed" ? check(await db.from("photo_finder_results").select("id,filename,similarity").eq("job_id", job.id).eq("uploaded", true).order("similarity", { ascending: false })) : [];
@@ -195,11 +235,11 @@ Deno.serve(async (req) => {
       if (showcaseUpload && req.method === "POST") {
         const photoId = Number(showcaseUpload[1]);
         const form = await readForm(req, 2 * 1024 * 1024);
-        const photo = form.get("photo");
+        const photoEntry = form.get("photo");
         const eventName = form.get("event_name");
+        const photo = photoEntry instanceof File ? photoEntry : fail("Invalid showcase photo");
         if (!Number.isSafeInteger(photoId) || photoId <= 0 ||
-            eventName !== event.name ||
-            !(photo instanceof File) || photo.type !== "image/webp" ||
+            eventName !== event.name || photo.type !== "image/webp" ||
             photo.size < 1 || photo.size > 2 * 1024 * 1024) {
           fail("Invalid showcase photo");
         }
@@ -259,12 +299,14 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       if (match![2] === "selfie" && req.method === "GET") {
-        const blob = check(await db.storage.from(bucket).download(job.selfie_path));
+        const blob = check(await db.storage.from(bucket).download(job.selfie_path))
+          ?? fail("Selfie not found", 404);
         return new Response(blob, { headers: { ...cors, "Content-Type": blob.type || "application/octet-stream" } });
       }
       if (match![2] === "results" && req.method === "POST") {
-        const form = await readForm(req, 51 * 1024 * 1024), photo = form.get("photo"), photoId = form.get("photo_id"), similarity = Number(form.get("similarity"));
-        if (!(photo instanceof File) || photo.size < 1 || photo.size > 50 * 1024 * 1024 || !/^\d+$/.test(String(photoId)) || !Number.isFinite(similarity) || similarity < 0.45 || similarity > 1.001) fail("Invalid result");
+        const form = await readForm(req, 51 * 1024 * 1024), photoEntry = form.get("photo"), photoId = form.get("photo_id"), similarity = Number(form.get("similarity"));
+        const photo = photoEntry instanceof File ? photoEntry : fail("Invalid result");
+        if (photo.size < 1 || photo.size > 50 * 1024 * 1024 || !/^\d+$/.test(String(photoId)) || !Number.isFinite(similarity) || similarity < 0.45 || similarity > 1.001) fail("Invalid result");
         const objectPath = `results/${job.id}/${photoId}`;
         await workerJob(event.id, job.id, job.lease_id);
         check(await db.from("photo_finder_results").upsert({ job_id: job.id, photo_id: Number(photoId), object_path: objectPath, filename: photo.name, similarity, uploaded: false }, { onConflict: "job_id,photo_id" }));

@@ -15,6 +15,8 @@ let downloadedCount = 0;
 let galleryPhotoCount = 0, settledPhotoCount = 0;
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
+let selectedEventId = "";
+let eventsLoaded = Boolean(eventToken);
 function showMessage(text) {
   message.textContent = text;
   $("#loading-status").textContent = text;
@@ -77,7 +79,8 @@ document.addEventListener("keydown", event => {
 
 function updateButton() {
   const file = selectedSelfie;
-  search.disabled = busy || !consent.checked || !file || file.size > MAX_SELFIE_BYTES;
+  const eventReady = eventToken || (eventsLoaded && selectedEventId);
+  search.disabled = busy || !eventReady || !consent.checked || !file || file.size > MAX_SELFIE_BYTES;
 }
 consent.addEventListener("change", updateButton);
 selfie.addEventListener("change", () => {
@@ -203,33 +206,99 @@ async function request(path, options = {}) {
   return response;
 }
 
+function selectEvent(eventId) {
+  selectedEventId = eventId;
+  $("#event-select").value = eventId;
+  document.querySelectorAll(".event-card-button").forEach(button => {
+    const active = button.dataset.eventId === eventId;
+    button.classList.toggle("selected", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  updateButton();
+}
+
+$("#event-select").addEventListener("change", event => selectEvent(event.target.value));
+
 async function loadEventShowcase() {
-  const response = await request("/guest/showcase", {
-    headers: { "X-Event-Token": eventToken },
-  });
-  const { event_name: eventName, photos: eventPhotos } = await response.json();
-  if (!Array.isArray(eventPhotos) || eventPhotos.length === 0) return;
+  const headers = eventToken ? { "X-Event-Token": eventToken } : {};
+  const response = await request("/guest/showcase", { headers });
+  const { events } = await response.json();
+  if (!Array.isArray(events)) throw new Error("The event list could not be loaded.");
 
-  $("#showcase-title").textContent = `A few moments from ${eventName}`;
-  const showcasePhotos = $("#showcase-photos");
-  showcasePhotos.replaceChildren();
-  for (const photo of eventPhotos) {
-    const image = document.createElement("img");
-    image.src = photo.url;
-    image.alt = "A photo from this event";
-    image.loading = "lazy";
-    image.decoding = "async";
-    showcasePhotos.append(image);
+  const select = $("#event-select");
+  select.replaceChildren();
+  if (!eventToken) {
+    const prompt = document.createElement("option");
+    prompt.value = "";
+    prompt.textContent = events.length ? "Select an event" : "No active events";
+    select.append(prompt);
+    for (const item of events) {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.name;
+      select.append(option);
+    }
+    $("#event-select-wrap").hidden = false;
   }
+
+  const eventCards = $("#showcase-events");
+  eventCards.replaceChildren();
+  for (const item of events) {
+    const card = document.createElement("article");
+    card.className = "event-card";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "event-card-button";
+    button.dataset.eventId = item.id;
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", `Choose ${item.name}`);
+    const collage = document.createElement("span");
+    collage.className = "event-card-photos";
+    for (const photo of (Array.isArray(item.photos) ? item.photos : []).slice(0, 3)) {
+      const image = document.createElement("img");
+      image.src = photo.url;
+      image.alt = "";
+      image.loading = "lazy";
+      image.decoding = "async";
+      collage.append(image);
+    }
+    if (!collage.childElementCount) {
+      collage.classList.add("no-event-photos");
+      collage.textContent = "Photos coming soon";
+    }
+    const details = document.createElement("span");
+    details.className = "event-card-details";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const action = document.createElement("span");
+    action.textContent = "Find my photos ↗";
+    details.append(name, action);
+    button.append(collage, details);
+    button.addEventListener("click", () => {
+      selectEvent(item.id);
+      $("#upload-card").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    card.append(button);
+    eventCards.append(card);
+  }
+
+  $("#event-count").textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
   $("#event-showcase").hidden = false;
+  if (!eventToken && events.length) selectEvent(events[0].id);
+  eventsLoaded = true;
+  updateButton();
 }
 
-if (eventToken) {
-  loadEventShowcase().catch(error => {
-    console.error("Event showcase could not be loaded:", error);
-    showMessage("Event preview photos are temporarily unavailable. Please try again later.");
-  });
-}
+loadEventShowcase().catch(error => {
+  console.error("Event collections could not be loaded:", error);
+  eventsLoaded = false;
+  const select = $("#event-select");
+  select.replaceChildren(new Option("Events unavailable", ""));
+  $("#event-select-wrap").hidden = !eventToken;
+  $("#event-showcase").hidden = true;
+  showMessage("Event collections are temporarily unavailable. Please try again later.");
+  updateButton();
+});
 
 function downloadPhoto(photo) {
   const link = document.createElement("a");
@@ -372,7 +441,9 @@ search.addEventListener("click", async () => {
   showMessage("Sending your selfie…");
   const body = new FormData(); body.append("file", selectedSelfie);
   try {
-    const eventHeaders = eventToken ? { "X-Event-Token": eventToken } : {};
+    const eventHeaders = eventToken
+      ? { "X-Event-Token": eventToken }
+      : { "X-Event-Id": selectedEventId };
     const job = await (await request("/guest/submit", { method: "POST", headers: eventHeaders, body })).json();
     const headers = { "X-Job-Token": job.job_token };
     showMessage("Finding your photos…");

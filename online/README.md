@@ -28,24 +28,39 @@ creates the private Storage bucket when it starts.
 Run the showcase migration
 [`20261110160000_create_private_event_showcases.sql`](../supabase/migrations/20261110160000_create_private_event_showcases.sql)
 as well. The laptop worker synchronizes up to three recent photos from the
-event's local folder to the private bucket every minute. Guests must open the
-event QR link; the opaque QR token resolves to the event on the server, and
-preview images are served through short-lived signed URLs. The event folder
-name is not used as a credential or exposed in the QR URL.
+event's local folder to the private bucket every minute. The main website
+publicly lists active event folders and their previews using short-lived signed
+image URLs. Only activate events whose names and preview images are intended to
+be public. No QR-code generation is required.
 
 For each additional event, create a matching local event and folder, then add
 an active `photo_finder_events` row whose `name` exactly matches that folder.
-Store that event's guest token and worker secret in a separate ignored file
-(for example `.env.wedding`); use the SHA-256 hashes in the database, and keep
-the raw tokens only in the QR link and local secrets file. Start a worker for
-each event with its local ID and secrets file, such as:
+Store its worker secret in a separate ignored file (for example
+`.env.wedding`) and add only its SHA-256 hash to the database. Start a worker
+for each event with its local ID and secrets file:
 
 ```powershell
+.\venv\Scripts\python.exe -c "from dotenv import dotenv_values; from hashlib import sha256; e=dotenv_values('.env.wedding'); print('worker hash:', sha256(e['PHOTO_FINDER_WORKER_SECRET'].encode()).hexdigest())"
+```
+
+Insert those hashes with the exact local folder name:
+
+```sql
+insert into public.photo_finder_events (name, guest_token_hash, worker_token_hash, active)
+values ('Wedding', null, '<worker hash>', true);
+```
+
+Import that folder into its local event ID, then start its worker:
+
+```powershell
+.\venv\Scripts\python.exe -m app.services.camera_importer --folder .\Wedding --event-id 4
 .\venv\Scripts\python.exe -m app.services.relay_worker --event-id 4 --secrets-file .env.wedding --relay-url https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay
 ```
 
-The guest website now requires a valid event QR token for photo searches as
-well as previews; the direct public-event fallback is disabled.
+Anyone can open `https://ai-photo-k5fu.vercel.app`, select an active event by
+its folder name, and submit a selfie search. As imported photos are indexed,
+the worker refreshes that event's three most recent previews automatically.
+QR links remain supported as an optional way to open one specific event.
 
 Before enabling the event, set its token hashes from the local `.env.relay`
 file. From the repository root, this command prints hashes only (not the

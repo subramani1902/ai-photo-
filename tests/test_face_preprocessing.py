@@ -19,6 +19,14 @@ from app.services.relay_worker import (
 
 
 class FacePreprocessingTests(unittest.TestCase):
+    def test_relay_worker_uses_the_worker_secret_for_authorization(self):
+        worker = RelayWorker("https://relay.example", "worker-secret", 5)
+
+        self.assertEqual(
+            worker.session.headers["Authorization"],
+            "Bearer worker-secret"
+        )
+
     def test_large_image_is_downscaled_without_changing_aspect_ratio(self):
         image = np.zeros((1200, 1800, 3), dtype=np.uint8)
 
