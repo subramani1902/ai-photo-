@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import numpy as np
-from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, UniqueConstraint
 
 from app.database.db import Base, engine
 from app.database.models import Face, Photo
@@ -25,8 +25,21 @@ class PersonFace(Base):
     __table_args__ = (UniqueConstraint("person_id", "photo_id"),)
 
 
+class PhotoSource(Base):
+    __tablename__ = "photo_sources"
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False, index=True)
+    relative_path = Column(String, nullable=False)
+    photo_id = Column(Integer, ForeignKey("photos.id"), nullable=False, index=True)
+    managed = Column(Boolean, nullable=False, default=False)
+    __table_args__ = (UniqueConstraint("event_id", "relative_path"),)
+
+
 def init_person_groups():
-    Base.metadata.create_all(engine, tables=[PersonGroup.__table__, PersonFace.__table__])
+    Base.metadata.create_all(
+        engine,
+        tables=[PersonGroup.__table__, PersonFace.__table__, PhotoSource.__table__],
+    )
 
 
 def normalized(value):

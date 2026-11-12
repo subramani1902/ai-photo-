@@ -13,6 +13,7 @@ from fastapi import (
     APIRouter,
     UploadFile,
     File,
+    Form,
     HTTPException,
     Query,
     Depends
@@ -27,6 +28,12 @@ from app.dependencies.auth import get_current_admin
 from app.ai.face_engine import FaceEngine
 from app.services.persistent_face_index import PersistentFaceIndex
 from app.services.person_groups import sync_person_groups
+from app.services.photo_sources import (
+    assign_photo_source,
+    normalize_source_path,
+    reconcile_photo_sources,
+    remove_source_files,
+)
 
 
 # --------------------------------------------------
@@ -201,7 +208,10 @@ def is_duplicate(
     file_hash: str,
     file_size: int
 ):
+    return find_duplicate_photo(db, event_id, file_hash, file_size) is not None
 
+
+def find_duplicate_photo(db: Session, event_id: int, file_hash: str, file_size: int):
     photos = (
         db.query(Photo)
         .filter(Photo.event_id == event_id)
@@ -231,12 +241,12 @@ def is_duplicate(
             )
 
             if existing_hash == file_hash:
-                return True
+                return photo
 
         except OSError:
             continue
 
-    return False
+    return None
 
 
 # --------------------------------------------------
@@ -249,6 +259,8 @@ async def upload_event_photos(
     event_id: int,
 
     files: list[UploadFile] = File(...),
+
+    source_paths: list[str] | None = Form(default=None),
 
     db: Session = Depends(get_db),
 
@@ -269,6 +281,15 @@ async def upload_event_photos(
             detail=f"Maximum {MAX_FILES_PER_UPLOAD} photos per upload."
         )
 
+    normalized_source_paths = None
+    if source_paths is not None:
+        if len(source_paths) != len(files):
+            raise HTTPException(status_code=400, detail="Invalid photo source paths.")
+        try:
+            normalized_source_paths = [normalize_source_path(path) for path in source_paths]
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
     uploaded_results = []
 
     total_faces_detected = 0
@@ -280,6 +301,8 @@ async def upload_event_photos(
     good_quality_faces = 0
     poor_quality_faces = 0
     unknown_quality_faces = 0
+    index_changed_by_replacement = False
+    source_cleanup_paths = []
 
     index_rebuild_message = None
 
@@ -318,12 +341,14 @@ async def upload_event_photos(
         # PROCESS EACH UPLOADED PHOTO
         # ------------------------------------------
 
-        for upload in files:
+        for file_index, upload in enumerate(files):
 
             saved_path = None
 
             embedding_paths = []
             metadata_paths = []
+            pending_source_cleanup = []
+            pending_source_index_change = False
 
             photo_good_faces = 0
             photo_poor_faces = 0
@@ -413,14 +438,21 @@ async def upload_event_photos(
 
                 file_hash = calculate_hash(content)
 
-                if is_duplicate(
-                    db,
-                    event_id,
-                    file_hash,
-                    len(content)
-                ):
+                duplicate = find_duplicate_photo(db, event_id, file_hash, len(content))
+                if duplicate:
 
                     skipped_duplicates += 1
+                    if normalized_source_paths is not None:
+                        changed, cleanup = assign_photo_source(
+                            db,
+                            event_id,
+                            normalized_source_paths[file_index],
+                            duplicate.id,
+                            managed=True,
+                        )
+                        db.commit()
+                        index_changed_by_replacement |= changed
+                        source_cleanup_paths.extend(cleanup)
 
                     uploaded_results.append({
                         "filename": original_filename,
@@ -461,6 +493,17 @@ async def upload_event_photos(
 
                 db.add(photo)
                 db.flush()
+
+                if normalized_source_paths is not None:
+                    changed, cleanup = assign_photo_source(
+                        db,
+                        event_id,
+                        normalized_source_paths[file_index],
+                        photo.id,
+                        managed=True,
+                    )
+                    pending_source_index_change |= changed
+                    pending_source_cleanup.extend(cleanup)
 
                 # ----------------------------------
                 # SAVE FACE EMBEDDINGS
@@ -551,6 +594,8 @@ async def upload_event_photos(
                 sync_person_groups(db, event_id)
                 db.commit()
                 db.refresh(photo)
+                index_changed_by_replacement |= pending_source_index_change
+                source_cleanup_paths.extend(pending_source_cleanup)
 
                 successful_uploads += 1
 
@@ -641,7 +686,7 @@ async def upload_event_photos(
         # REBUILD FAISS INDEX
         # ------------------------------------------
 
-        if total_faces_detected > 0:
+        if total_faces_detected > 0 or index_changed_by_replacement:
 
             try:
 
@@ -710,6 +755,23 @@ async def upload_event_photos(
                 await upload.close()
             except Exception:
                 pass
+        remove_source_files(source_cleanup_paths)
+
+
+@router.post("/{event_id}/sources/reconcile")
+def reconcile_event_photo_sources(
+    event_id: int,
+    source_paths: list[str] | None = Form(default=None),
+    complete: bool = Form(default=False),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    get_event_or_404(db, event_id, current_admin.id)
+    try:
+        changed = reconcile_photo_sources(db, event_id, source_paths or [], complete=complete)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"event_id": event_id, "index_rebuilt": changed}
 
 
 # --------------------------------------------------

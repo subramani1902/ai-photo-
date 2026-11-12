@@ -3,10 +3,13 @@
 import argparse
 from contextlib import ExitStack
 import getpass
+import os
 import time
 from pathlib import Path
 
 import requests
+
+from app.services.photo_sources import folder_is_processed
 
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -31,6 +34,23 @@ def scan_ready(folder, observed, processed, now, stable_seconds):
         elif stat.st_size and now - previous[1] >= stable_seconds:
             ready.append((path, signature))
     return ready
+
+
+def source_paths(folder):
+    root = Path(folder).resolve(strict=True)
+    if not root.is_dir():
+        raise NotADirectoryError(root)
+    paths = []
+
+    def raise_walk_error(error):
+        raise error
+
+    for directory, _, filenames in os.walk(root, onerror=raise_walk_error):
+        for filename in filenames:
+            path = Path(directory) / filename
+            if not path.is_symlink() and path.suffix.lower() in EXTENSIONS and path.is_file():
+                paths.append(path.relative_to(root).as_posix())
+    return sorted(paths)
 
 
 def main():
@@ -77,7 +97,16 @@ def main():
                 try:
                     with ExitStack() as stack:
                         uploads = [("files", (path.name, stack.enter_context(path.open("rb")))) for path, _ in batch]
-                        response = session.post(f"{server}/api/events/{args.event_id}/upload", files=uploads, timeout=(10, 600))
+                        relative_paths = [
+                            ("source_paths", path.relative_to(folder).as_posix())
+                            for path, _ in batch
+                        ]
+                        response = session.post(
+                            f"{server}/api/events/{args.event_id}/upload",
+                            files=uploads,
+                            data=relative_paths,
+                            timeout=(10, 600),
+                        )
                     if response.status_code == 401:
                         login()
                         continue
@@ -97,6 +126,21 @@ def main():
                         print("WARNING: Search index rebuild failed; an operator must rebuild it.", flush=True)
                 except (OSError, requests.RequestException, ValueError, KeyError, IndexError) as error:
                     print(f"Could not import batch starting with {batch[0][0].name}: {error}; retrying.", flush=True)
+            try:
+                response = session.post(
+                    f"{server}/api/events/{args.event_id}/sources/reconcile",
+                    data=[
+                        *(("source_paths", path) for path in source_paths(folder)),
+                        ("complete", str(folder_is_processed(folder, processed)).lower()),
+                    ],
+                    timeout=30,
+                )
+                if response.status_code == 401:
+                    login()
+                    continue
+                response.raise_for_status()
+            except (OSError, ValueError, requests.RequestException) as error:
+                print(f"Could not reconcile removed event photos: {error}; retrying.", flush=True)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\nStopped watching.")

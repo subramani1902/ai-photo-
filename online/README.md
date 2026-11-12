@@ -70,6 +70,12 @@ To enable these result categories on an existing relay, apply
 deploy the relay function, redeploy the static website, and restart the event
 worker so it reports each matched photo's detected face count.
 
+The active-search limit is 25 per event, including queued and processing
+requests. The existing per-event intake limit remains 20 submissions per
+minute. One worker processes one search at a time; the remaining accepted
+searches wait in the queue. To change an existing relay, apply
+[`20261110180000_limit_active_searches_to_25.sql`](../supabase/migrations/20261110180000_limit_active_searches_to_25.sql).
+
 Before enabling the event, set its token hashes from the local `.env.relay`
 file. From the repository root, this command prints hashes only (not the
 secrets):
@@ -111,7 +117,8 @@ HTML, JavaScript, CSS, and image assets.
 
 From the repository root, run the camera importer in one PowerShell terminal.
 It watches `Candid`, imports stable photos into local event ID 3 (`Candid
-Test`), and rebuilds the event's face index:
+Test`), rebuilds the event's face index, and keeps that event synchronized
+with the folder:
 
 ```powershell
 .\venv\Scripts\python.exe -m app.services.camera_importer --folder .\Candid --event-id 3
@@ -138,14 +145,23 @@ For guest results, originals larger than 8 MB are converted to high-quality
 JPEG copies up to 1600 pixels and uploaded four at a time; the local originals
 are retained.
 
+For folder-managed photos, the watched folder is the event's source of truth:
+new and replaced files are re-indexed, and deleted files are removed from the
+event's local search data. At startup, the importer waits until all supported
+images have been successfully scanned before removing untracked legacy photos.
+Keep every photo that belongs to the event inside its watched folder; photos
+uploaded outside that folder are removed when the initial full sync completes.
+Preview images refresh automatically through the relay worker.
+
 ## Prototype limits
 
 - This setup is paired to local event ID 3 (`Candid Test`) and the current Supabase test event. Its intake folder is `Candid` at the repository root.
 - Jobs expire after 24 hours. The migration does not configure a scheduled
   cleanup task; set up and test the maintenance secret and scheduler in the new
   Supabase project before relying on automatic removal of stored files.
-- The relay limits each event to 20 submissions per minute and 100 active
-  requests, using an atomic database reservation. It also limits upload size.
+- The relay limits each event to 20 submissions per minute and 25 active
+  requests, using an atomic database reservation. One worker processes searches
+  sequentially. It also limits upload size.
   These controls are not a substitute for independent security and load testing.
 - Search accuracy, concurrency, internet throughput, phone downloads, and
   photo retention policies need real-event testing.

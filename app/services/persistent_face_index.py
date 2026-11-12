@@ -206,26 +206,21 @@ class PersistentFaceIndex:
 
                     skipped_invalid += 1
 
-            if not embeddings:
-
-                raise ValueError(
-                    "No valid embeddings available for this event."
-                )
-
-            # Create embedding matrix
-            matrix = np.vstack(
-                embeddings
-            ).astype(np.float32)
-
-            # Normalize embeddings
-            faiss.normalize_L2(matrix)
+            matrix = (
+                np.vstack(embeddings).astype(np.float32)
+                if embeddings
+                else np.empty((0, self.dimension), dtype=np.float32)
+            )
+            if embeddings:
+                faiss.normalize_L2(matrix)
 
             # Create FAISS index
             index = faiss.IndexFlatIP(
                 self.dimension
             )
 
-            index.add(matrix)
+            if embeddings:
+                index.add(matrix)
 
             self.index_dir.mkdir(
                 parents=True,
@@ -416,6 +411,9 @@ class PersistentFaceIndex:
             raise RuntimeError(
                 "Load an event index first."
             )
+
+        if self.index.ntotal == 0:
+            return []
 
         query = np.asarray(
             query_embedding,
