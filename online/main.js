@@ -230,47 +230,21 @@ async function request(path, options = {}) {
   return response;
 }
 
-function selectEvent(eventId) {
-  selectedEventId = eventId;
-  $("#event-select").value = eventId;
-  updateButton();
-}
-
-$("#event-select").addEventListener("change", event => selectEvent(event.target.value));
-
 async function loadEvents() {
   const headers = eventToken ? { "X-Event-Token": eventToken } : {};
   const response = await request("/guest/showcase", { headers });
   const { events } = await response.json();
   if (!Array.isArray(events)) throw new Error("The event list could not be loaded.");
 
-  const select = $("#event-select");
-  select.replaceChildren();
-  if (!eventToken) {
-    const prompt = document.createElement("option");
-    prompt.value = "";
-    prompt.textContent = events.length ? "Select an event" : "No active events";
-    select.append(prompt);
-    for (const item of events) {
-      const option = document.createElement("option");
-      option.value = item.id;
-      option.textContent = item.name;
-      select.append(option);
-    }
-    $("#event-select-wrap").hidden = false;
-  }
-
-  if (!eventToken && events.length) selectEvent(events[0].id);
+  selectedEventId = !eventToken && events.length ? String(events[0].id) : "";
   eventsLoaded = true;
+  showMessage(!eventToken && !events.length ? "No event is currently available." : "");
   updateButton();
 }
 
 loadEvents().catch(error => {
   console.error("Events could not be loaded:", error);
   eventsLoaded = false;
-  const select = $("#event-select");
-  select.replaceChildren(new Option("Events unavailable", ""));
-  $("#event-select-wrap").hidden = !eventToken;
   showMessage("Events are temporarily unavailable. Please try again later.");
   updateButton();
 });
