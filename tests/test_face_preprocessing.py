@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+from app.database.models import Photo
 from app.api.photos import is_duplicate
 from app.ai.face_engine import (
     prepare_image_for_processing,
@@ -90,7 +91,7 @@ class FacePreprocessingTests(unittest.TestCase):
             processed = cv2.imread(str(preview))
             self.assertEqual(processed.shape[:2], (427, 640))
 
-    def test_event_showcase_sync_keeps_only_latest_local_photos(self):
+    def test_event_showcase_sync_keeps_only_latest_face_photos(self):
         event_query, source_query, photo_query, db = Mock(), Mock(), Mock(), MagicMock()
         db.__enter__.return_value = db
         db.query.side_effect = [event_query, source_query, photo_query]
@@ -100,7 +101,7 @@ class FacePreprocessingTests(unittest.TestCase):
         source_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(
             folder_path=str(Path.cwd())
         )
-        photo_query.filter_by.return_value.order_by.return_value.limit.return_value.all.return_value = [
+        photo_query.filter_by.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [
             SimpleNamespace(id=3, filename="three.jpg", file_path="unused"),
             SimpleNamespace(id=2, filename="two.jpg", file_path="unused"),
             SimpleNamespace(id=1, filename="one.jpg", file_path="unused"),
@@ -115,6 +116,9 @@ class FacePreprocessingTests(unittest.TestCase):
             worker.sync_showcase()
 
         self.assertEqual(request.call_args_list[0].args, ("GET", "/worker/showcase"))
+        photo_filter = photo_query.filter_by.return_value.filter
+        photo_filter.assert_called_once()
+        self.assertTrue(photo_filter.call_args.args[0].compare(Photo.faces.any()))
         self.assertEqual(
             request.call_args_list[1].kwargs["json"],
             {

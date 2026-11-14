@@ -54,7 +54,20 @@ body.gallery-visible{padding-bottom:76px}
 .result{overflow:hidden;border:1px solid #e6e9e1;border-radius:16px;background:white;box-shadow:0 8px 24px #2038260a;transition:transform .2s ease,box-shadow .2s ease}
 .result:hover{transform:translateY(-3px);box-shadow:0 14px 32px #20382615}
 .photo-open{border-radius:0}
+.photo-open[aria-busy=true]{position:relative;background:linear-gradient(135deg,#edf2eb,#e3ebe2)}
+.photo-open[aria-busy=true]::after{position:absolute;inset:0;display:grid;place-items:center;color:#718078;font-size:12px;content:"Loading photo…"}
 .photo-meta{padding:10px 12px}
+.event-showcase{margin-top:20px;padding:16px;border:1px solid #e6ebe2;border-radius:16px;background:#fff}
+.showcase-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.showcase-heading h2{margin-top:8px;font:400 22px var(--serif)}
+.showcase-event-name{max-width:45%;overflow:hidden;color:var(--muted);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.showcase-photos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.showcase-photos figure{margin:0;overflow:hidden;aspect-ratio:4/3;border-radius:9px;background:#edf2eb}
+.showcase-photos img{display:block;width:100%;height:100%;object-fit:cover}
+.gallery-load-progress{margin:20px 0;padding:14px;border:1px solid #e2e8de;border-radius:14px;background:#fff}
+.gallery-load-progress[hidden]{display:none}
+.gallery-load-progress>p{color:var(--green);font-size:13px;font-weight:600}
+.gallery-load-progress .scan-counts{margin-top:10px}
 .gallery-action-bar{border-color:#e0e8df;background:rgba(255,255,255,.94)}
 .camera-panel{box-shadow:0 12px 28px #172b221c}
 @media(max-width:600px){
@@ -65,6 +78,9 @@ body.gallery-visible{padding-bottom:76px}
   .upload-card{margin-top:22px;padding:20px;border-radius:18px}
   .card-heading h2{font-size:27px}
   .social-links{padding-top:20px}
+  .event-showcase{padding:13px}
+  .showcase-heading h2{font-size:19px}
+  .showcase-photos{gap:6px}
 }
 @media(prefers-reduced-motion:reduce){
   .upload,.camera-trigger,.primary,.social-links button,.result{transition:none}

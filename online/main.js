@@ -15,6 +15,7 @@ let downloadedCount = 0;
 let galleryPhotoCount = 0, settledPhotoCount = 0, fetchedPhotoCount = 0;
 let galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
 let activeCategory = "all";
+let galleryLoadGeneration = 0, photoFetchController = null;
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
 let selectedEventId = "";
@@ -28,6 +29,9 @@ function updateLoadingPhotoCounts(detected, fetched, total) {
   $("#photos-detected").textContent = String(detected);
   $("#photos-fetched").textContent = String(fetched);
   $("#photos-total").textContent = String(total);
+  $("#gallery-photos-detected").textContent = String(detected);
+  $("#gallery-photos-fetched").textContent = String(fetched);
+  $("#gallery-photos-total").textContent = String(total);
 }
 
 function setLoadingAnimation(show) {
@@ -236,13 +240,45 @@ async function request(path, options = {}) {
   return response;
 }
 
+function renderEventShowcase(event) {
+  const section = $("#event-showcase");
+  const gallery = $("#showcase-photos");
+  const previews = Array.isArray(event.photos)
+    ? event.photos.filter(photo => photo && typeof photo.url === "string" && photo.url &&
+      typeof photo.filename === "string")
+    : [];
+  gallery.replaceChildren();
+  if (!previews.length) {
+    section.hidden = true;
+    return;
+  }
+
+  $("#event-showcase-name").textContent = typeof event.name === "string" ? event.name : "";
+  previews.forEach((photo, index) => {
+    const figure = document.createElement("figure");
+    const image = document.createElement("img");
+    image.src = photo.url;
+    image.alt = `Recent event photo ${index + 1}`;
+    image.loading = "lazy";
+    image.addEventListener("error", () => {
+      figure.remove();
+      if (!gallery.childElementCount) section.hidden = true;
+    });
+    figure.append(image);
+    gallery.append(figure);
+  });
+  section.hidden = false;
+}
+
 async function loadEvents() {
   const headers = eventToken ? { "X-Event-Token": eventToken } : {};
   const response = await request("/guest/showcase", { headers });
   const { events } = await response.json();
   if (!Array.isArray(events)) throw new Error("The event list could not be loaded.");
 
-  selectedEventId = !eventToken && events.length ? String(events[0].id) : "";
+  const event = events[0];
+  selectedEventId = !eventToken && event ? String(event.id) : "";
+  if (event) renderEventShowcase(event);
   eventsLoaded = true;
   showMessage(!eventToken && !events.length ? "No event is currently available." : "");
   updateButton();
@@ -344,10 +380,11 @@ function showPhoto(photo) {
 $("#close-preview").addEventListener("click", () => preview.close());
 $("#preview-download").addEventListener("click", () => { if (selectedPhoto) downloadPhoto(selectedPhoto); });
 
-async function renderPhoto(photo, job, headers, index) {
+async function renderPhoto(photo, job, headers, index, generation, signal) {
   const card = document.createElement("article"); card.className = "result";
   card.dataset.category = Number(photo.face_count) > 1 ? "group" : "candid";
   const open = document.createElement("button"); open.className = "photo-open"; open.disabled = true;
+  open.setAttribute("aria-busy", "true");
   open.setAttribute("aria-label", "View " + photo.filename);
   const image = document.createElement("img"); image.className = "photo"; image.alt = ""; image.loading = "lazy";
   open.append(image);
@@ -372,23 +409,32 @@ async function renderPhoto(photo, job, headers, index) {
   download.setAttribute("aria-label", "Download " + photo.filename); download.disabled = true;
   meta.append(name, download); card.append(open, selectLabel, meta); photos.append(card);
   try {
-    const blob = await (await request(`/guest/jobs/${job.job_id}/photos/${photo.id}`, { headers })).blob();
+    const blob = await (await request(`/guest/jobs/${job.job_id}/photos/${photo.id}`, {
+      headers,
+      signal,
+    })).blob();
+    if (generation !== galleryLoadGeneration) return;
     const url = URL.createObjectURL(blob); objectUrls.push(url);
     const readyPhoto = { url, filename: photo.filename, blob };
     downloadablePhotos[index] = readyPhoto; image.src = url;
     fetchedPhotoCount += 1;
     updateLoadingPhotoCounts(galleryPhotoCount, fetchedPhotoCount, galleryPhotoCount);
+    open.setAttribute("aria-busy", "false");
     open.disabled = false; download.disabled = false;
     select.disabled = false;
     open.addEventListener("click", () => showPhoto(readyPhoto));
     download.addEventListener("click", () => downloadPhoto(readyPhoto));
   } catch (error) {
+    if (generation !== galleryLoadGeneration) return;
     console.error(`Could not load matched photo ${photo.id}:`, error);
+    open.setAttribute("aria-busy", "false");
     name.textContent = error instanceof Error ? error.message : "Couldn't load photo";
     open.setAttribute("aria-label", "Photo could not be loaded");
   } finally {
-    settledPhotoCount += 1;
-    updateSelectionControls();
+    if (generation === galleryLoadGeneration) {
+      settledPhotoCount += 1;
+      updateSelectionControls();
+    }
   }
 }
 
@@ -418,6 +464,11 @@ search.addEventListener("click", async () => {
       }
       showMessage(status.status === "processing" ? "Matching your face with event photos…" : "Waiting for the event laptop…");
     }
+    galleryLoadGeneration += 1;
+    photoFetchController?.abort();
+    photoFetchController = new AbortController();
+    const generation = galleryLoadGeneration;
+    const signal = photoFetchController.signal;
     formSection.hidden = true; results.hidden = false; photos.replaceChildren();
     $("#gallery-action-bar").hidden = false;
     document.body.classList.add("gallery-visible");
@@ -431,6 +482,10 @@ search.addEventListener("click", async () => {
     showMessage(galleryPhotoCount
       ? `Found ${galleryPhotoCount} matching photos. Loading them now…`
       : "No matching photos found.");
+    $("#gallery-load-progress").hidden = galleryPhotoCount === 0;
+    $("#gallery-load-status").textContent = galleryPhotoCount
+      ? `Loading ${galleryPhotoCount} matching photos…`
+      : "No matching photos found.";
     galleryCategoryCounts = {
       all: galleryPhotoCount,
       candid: status.photos.filter(photo => Number(photo.face_count) === 1).length,
@@ -449,7 +504,22 @@ search.addEventListener("click", async () => {
       ? `We found ${count} photo${count === 1 ? "" : "s"}: ${galleryCategoryCounts.candid} candid · ${galleryCategoryCounts.group} group.`
       : "No photos found this time.";
     message.textContent = "";
-    await Promise.all(status.photos.map((photo, index) => renderPhoto(photo, job, headers, index)));
+    const photoLoads = status.photos.map((photo, index) =>
+      renderPhoto(photo, job, headers, index, generation, signal)
+    );
+    void Promise.all(photoLoads).then(() => {
+      if (generation !== galleryLoadGeneration) return;
+      photoFetchController = null;
+      const failedCount = galleryPhotoCount - fetchedPhotoCount;
+      $("#gallery-load-status").textContent = failedCount
+        ? `Fetched ${fetchedPhotoCount} of ${galleryPhotoCount} photos; ${failedCount} could not be loaded.`
+        : `All ${galleryPhotoCount} photos are ready.`;
+    }).catch(error => {
+      if (generation !== galleryLoadGeneration) return;
+      photoFetchController = null;
+      console.error("Could not load matching photos:", error);
+      $("#gallery-load-status").textContent = "Some matching photos could not be loaded.";
+    });
     updateSelectionControls();
     window.scrollTo({ top: 0, behavior: "auto" });
   } catch (error) { message.textContent = error.message; }
@@ -457,6 +527,9 @@ search.addEventListener("click", async () => {
 });
 
 $("#again").addEventListener("click", () => {
+  galleryLoadGeneration += 1;
+  photoFetchController?.abort();
+  photoFetchController = null;
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
   galleryPhotoCount = 0; settledPhotoCount = 0; fetchedPhotoCount = 0;
@@ -465,6 +538,7 @@ $("#again").addEventListener("click", () => {
   $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";
   updateSelectionControls();
   $("#gallery-action-bar").hidden = true;
+  $("#gallery-load-progress").hidden = true;
   document.body.classList.remove("gallery-visible");
   downloadedCount = 0;
   $("#download-status").textContent = "Downloaded 0 photos";

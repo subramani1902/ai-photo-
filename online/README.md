@@ -65,6 +65,9 @@ Anyone can open `https://ai-photo-k5fu.vercel.app` to see the current watched
 folder and submit a selfie search. As imported photos are indexed, the worker
 refreshes that folder's three most recent previews automatically. QR links
 remain supported as an optional way to open one specific event.
+The website shows those previews on the home page and while search results load
+progressively. Public previews and selfie matches use only photos with at least
+one detected face; the importer keeps all original photos locally.
 Search results can be filtered into Candid (one detected face) and Group (two
 or more detected faces). Photos without a detected face are not candidates for
 selfie matching.

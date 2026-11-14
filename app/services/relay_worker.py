@@ -128,6 +128,7 @@ class RelayWorker:
             photos = (
                 db.query(Photo)
                 .filter_by(event_id=self.event_id)
+                .filter(Photo.faces.any())
                 .order_by(Photo.id.desc())
                 .limit(SHOWCASE_PHOTO_COUNT)
                 .all()
