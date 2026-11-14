@@ -156,9 +156,10 @@ detection. The camera importer sends up to 20 photos per batch so the face
 search index is rebuilt once per batch instead of once per photo. The local
 face engine uses the NVIDIA CUDA provider when available and falls back to CPU.
 Install dependencies from `requirements.txt` before starting the importer.
-For guest results, originals larger than 8 MB are converted to high-quality
+For guest results, originals larger than 1 MB are converted to high-quality
 JPEG copies up to 1600 pixels and uploaded four at a time; the local originals
-are retained.
+are retained. A separate heartbeat keeps the search lease and current event
+alive while face matching or photo uploads are in progress.
 
 For folder-managed photos, the watched folder is the event's source of truth:
 new and replaced files are re-indexed, and deleted files are removed from the

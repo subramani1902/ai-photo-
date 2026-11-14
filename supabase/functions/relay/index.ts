@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
           ?? fail("Photo not found", 404);
         return new Response(blob, { headers: { ...cors, "Content-Type": blob.type || "application/octet-stream", "X-Content-Type-Options": "nosniff" } });
       }
-      let photos = [];
+      let photos: Array<{ id: string; filename: string; similarity: number; face_count: number }> = [];
       let photosDetected = 0;
       if (job.status === "completed") {
         photos = check(await db.from("photo_finder_results")
@@ -370,6 +370,11 @@ Deno.serve(async (req) => {
       if (match![2] === "heartbeat" && req.method === "POST") {
         const updated = check(await db.from("photo_finder_jobs").update({ lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", job.id).eq("status", "processing").eq("lease_id", job.lease_id).select("id").maybeSingle());
         if (!updated) fail("Request lease expired", 409);
+        // A long search must not make the current event disappear from the site.
+        check(await db.from("photo_finder_events")
+          .update({ current_updated_at: new Date().toISOString() })
+          .eq("id", event.id)
+          .eq("is_current", true));
         return json({ ok: true });
       }
       if (match![2] === "release" && req.method === "POST") {

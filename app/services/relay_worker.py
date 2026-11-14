@@ -10,7 +10,9 @@ import os
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Event, Thread
 from urllib.parse import urlparse
 
 import cv2
@@ -23,10 +25,11 @@ from app.services.remote_matching import find_event_matches
 
 LOG = logging.getLogger(__name__)
 MAX_SELFIE_BYTES = 20 * 1024 * 1024
-MAX_RESULT_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_RESULT_SOURCE_BYTES = 1024 * 1024
 MAX_RESULT_DIMENSION = 1600
 RESULT_JPEG_QUALITY = 85
 RESULT_UPLOAD_WORKERS = 4
+HEARTBEAT_INTERVAL_SECONDS = 30
 SHOWCASE_PHOTO_COUNT = 3
 SHOWCASE_MAX_DIMENSION = 640
 SHOWCASE_WEBP_QUALITY = 78
@@ -181,7 +184,7 @@ class RelayWorker:
             folder_name,
         )
 
-    def request(self, method, path, *, retry_safe=False, session=None, **kwargs):
+    def request(self, method, path, *, retry_safe=False, session=None, timeout=(10, 120), **kwargs):
         # Multipart uploads consume their file objects; rewind them on each retry.
         client = session or self.session
         files = kwargs.get("files", {})
@@ -192,7 +195,7 @@ class RelayWorker:
                 file.seek(position)
             try:
                 response = client.request(method, self.relay_url + path,
-                                          timeout=(10, 120), allow_redirects=False, **kwargs)
+                                          timeout=timeout, allow_redirects=False, **kwargs)
                 if 300 <= response.status_code < 400:
                     raise requests.HTTPError("Relay redirects are not allowed.")
                 if response.status_code in (429, 500, 502, 503, 504) and attempt + 1 < attempts:
@@ -200,13 +203,52 @@ class RelayWorker:
                     LOG.warning("Relay returned %s; retrying", response.status_code)
                     time.sleep(min(2 ** attempt, 8))
                     continue
+                if not response.ok:
+                    LOG.warning("Relay %s %s returned HTTP %s", method, path, response.status_code)
                 response.raise_for_status()
                 return response
-            except (requests.ConnectionError, requests.Timeout):
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                LOG.warning("Relay %s %s failed (%s)", method, path, type(exc).__name__)
                 if attempt + 1 == attempts:
                     raise
                 LOG.warning("Relay connection interrupted; retrying")
                 time.sleep(min(2 ** attempt, 8))
+
+    @contextmanager
+    def keep_job_alive(self, job_id, headers):
+        # Matching and an upload batch can both outlast a lease. Use a separate
+        # session so heartbeats continue while the main thread is blocked.
+        stop = Event()
+        errors = []
+
+        def heartbeat():
+            failures = 0
+            with requests.Session() as session:
+                session.headers.update(self.session.headers)
+                while not stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+                    try:
+                        self.request("POST", f"/worker/jobs/{job_id}/heartbeat",
+                                     headers=headers, session=session, timeout=(5, 15))
+                        failures = 0
+                    except requests.RequestException as exc:
+                        failures += 1
+                        status = exc.response.status_code if exc.response is not None else None
+                        if status in (401, 403, 409) or failures >= 3:
+                            errors.append(exc)
+                            return
+                        LOG.warning("Job heartbeat interrupted; retrying")
+
+        def check_lease():
+            if errors:
+                raise errors[0]
+
+        thread = Thread(target=heartbeat, name="relay-job-heartbeat", daemon=True)
+        thread.start()
+        try:
+            yield check_lease
+        finally:
+            stop.set()
+            thread.join()
 
     def process_once(self):
         response = self.request("POST", "/worker/claim")
@@ -219,8 +261,11 @@ class RelayWorker:
         lease = str(UUID(str(job["lease"])))
         already_uploaded = set(job.get("uploaded_photo_ids", []))
         headers = {"X-Job-Lease": lease}
+        started = time.monotonic()
+        LOG.info("Started request %s (resuming %d uploaded photos)", job_id, len(already_uploaded))
         try:
-            with tempfile.TemporaryDirectory(prefix="photo-finder-") as directory:
+            with self.keep_job_alive(job_id, headers) as check_lease, \
+                    tempfile.TemporaryDirectory(prefix="photo-finder-") as directory:
                 selfie = Path(directory) / "selfie.jpg"
                 with self.request("GET", f"/worker/jobs/{job_id}/selfie", headers=headers, retry_safe=True,
                                   stream=True) as download, selfie.open("wb") as output:
@@ -239,8 +284,11 @@ class RelayWorker:
                     match for match in matches
                     if match["photo_id"] not in already_uploaded
                 ]
+                check_lease()
+                LOG.info("Matched %d new photos in %.1fs", len(matches), time.monotonic() - started)
 
                 def upload_match(match):
+                    check_lease()
                     source_path = Path(match["path"])
                     if source_path.stat().st_size > MAX_RESULT_SOURCE_BYTES:
                         transfer_path = prepare_photo_for_transfer(
@@ -273,28 +321,23 @@ class RelayWorker:
                                 },
                             )
 
-                last_heartbeat = time.monotonic()
                 for start in range(0, len(matches), RESULT_UPLOAD_WORKERS):
-                    if time.monotonic() - last_heartbeat >= 30:
-                        self.request(
-                            "POST",
-                            f"/worker/jobs/{job_id}/heartbeat",
-                            headers=headers,
-                            retry_safe=True,
-                        )
-                        last_heartbeat = time.monotonic()
+                    check_lease()
                     batch = matches[start:start + RESULT_UPLOAD_WORKERS]
                     with ThreadPoolExecutor(max_workers=RESULT_UPLOAD_WORKERS) as executor:
                         futures = [executor.submit(upload_match, match) for match in batch]
                         for future in as_completed(futures):
                             future.result()
+                            check_lease()
                     LOG.info(
                         "Uploaded %d/%d matched photos",
                         min(start + len(batch), len(matches)),
                         len(matches),
                     )
+                check_lease()
                 self.request("POST", f"/worker/jobs/{job_id}/complete", headers=headers, retry_safe=True)
-                LOG.info("Finished request %s with %d matches", job_id, len(matches))
+                LOG.info("Finished request %s with %d new matches in %.1fs",
+                         job_id, len(matches), time.monotonic() - started)
         except ValueError as exc:
             # Validation errors are safe to show; internal errors must not disclose local paths.
             message = str(exc) if str(exc) in {
