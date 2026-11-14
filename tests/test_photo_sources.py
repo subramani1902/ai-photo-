@@ -12,6 +12,7 @@ from app.database.models import Event, Face, Photo
 from app.services.person_groups import PersonFace, PersonGroup, PhotoSource
 from app.services.photo_sources import (
     assign_photo_source,
+    folder_is_processed,
     normalize_source_path,
     reconcile_photo_sources,
     remove_source_files,
@@ -50,6 +51,25 @@ class PhotoSourceTests(unittest.TestCase):
         self.assertEqual(source_paths_in(root), ["ceremony/photo.JPG"])
         with self.assertRaises(FileNotFoundError):
             source_paths_in(root / "missing")
+
+    def test_folder_is_not_complete_if_a_photo_disappears_during_scan(self):
+        root = Path("event")
+        root.mkdir()
+        photo = root / "photo.jpg"
+        photo.write_bytes(b"photo")
+        missing_photo = root.resolve() / photo.name
+        original_stat = Path.stat
+
+        def stat(path, *args, **kwargs):
+            if path == missing_photo:
+                raise FileNotFoundError(path)
+            return original_stat(path, *args, **kwargs)
+
+        with patch(
+            "app.services.photo_sources.source_paths_in",
+            return_value=["photo.jpg"],
+        ), patch.object(Path, "stat", new=stat):
+            self.assertFalse(folder_is_processed(root, {}))
 
     def test_replacing_a_source_removes_the_old_managed_photo_and_files(self):
         event_root = Path("storage/events/wedding/originals")

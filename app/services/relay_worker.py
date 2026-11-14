@@ -100,11 +100,28 @@ class RelayWorker:
     def sync_showcase(self):
         from app.database.db import SessionLocal
         from app.database.models import Event, Photo
+        from app.services.person_groups import EventSourceFolder, init_person_groups
 
+        init_person_groups()
         with SessionLocal() as db:
             event = db.query(Event).filter_by(id=self.event_id).one_or_none()
             if event is None:
                 raise ValueError(f"Local event {self.event_id} does not exist.")
+            source_folder = (
+                db.query(EventSourceFolder)
+                .filter_by(event_id=self.event_id)
+                .one_or_none()
+            )
+            if source_folder is None:
+                raise ValueError(
+                    f"No watched folder is registered for local event {self.event_id}."
+                )
+            folder_path = Path(source_folder.folder_path).resolve(strict=True)
+            if not folder_path.is_dir():
+                raise ValueError("The registered watched folder is unavailable.")
+            folder_name = folder_path.name
+            if not folder_name or folder_name in {".", ".."}:
+                raise ValueError("Invalid watched folder name.")
             event_name = event.event_name
             if not event_name or Path(event_name).name != event_name or event_name in {".", ".."}:
                 raise ValueError("Invalid local event folder name.")
@@ -151,9 +168,17 @@ class RelayWorker:
         self.request(
             "POST",
             "/worker/showcase",
-            json={"event_name": event_name, "photo_ids": keep_ids},
+            json={
+                "event_name": event_name,
+                "folder_name": folder_name,
+                "photo_ids": keep_ids,
+            },
         )
-        LOG.info("Synchronized %d showcase photos for event %s", len(keep_ids), event_name)
+        LOG.info(
+            "Synchronized %d showcase photos for current folder %s",
+            len(keep_ids),
+            folder_name,
+        )
 
     def request(self, method, path, *, retry_safe=False, session=None, **kwargs):
         # Multipart uploads consume their file objects; rewind them on each retry.

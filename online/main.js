@@ -233,17 +233,12 @@ async function request(path, options = {}) {
 function selectEvent(eventId) {
   selectedEventId = eventId;
   $("#event-select").value = eventId;
-  document.querySelectorAll(".event-card-button").forEach(button => {
-    const active = button.dataset.eventId === eventId;
-    button.classList.toggle("selected", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
   updateButton();
 }
 
 $("#event-select").addEventListener("change", event => selectEvent(event.target.value));
 
-async function loadEventShowcase() {
+async function loadEvents() {
   const headers = eventToken ? { "X-Event-Token": eventToken } : {};
   const response = await request("/guest/showcase", { headers });
   const { events } = await response.json();
@@ -265,62 +260,18 @@ async function loadEventShowcase() {
     $("#event-select-wrap").hidden = false;
   }
 
-  const eventCards = $("#showcase-events");
-  eventCards.replaceChildren();
-  for (const item of events) {
-    const card = document.createElement("article");
-    card.className = "event-card";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "event-card-button";
-    button.dataset.eventId = item.id;
-    button.setAttribute("aria-pressed", "false");
-    button.setAttribute("aria-label", `Choose ${item.name}`);
-    const collage = document.createElement("span");
-    collage.className = "event-card-photos";
-    for (const photo of (Array.isArray(item.photos) ? item.photos : []).slice(0, 3)) {
-      const image = document.createElement("img");
-      image.src = photo.url;
-      image.alt = "";
-      image.loading = "lazy";
-      image.decoding = "async";
-      collage.append(image);
-    }
-    if (!collage.childElementCount) {
-      collage.classList.add("no-event-photos");
-      collage.textContent = "Photos coming soon";
-    }
-    const details = document.createElement("span");
-    details.className = "event-card-details";
-    const name = document.createElement("strong");
-    name.textContent = item.name;
-    const action = document.createElement("span");
-    action.textContent = "Find my photos ↗";
-    details.append(name, action);
-    button.append(collage, details);
-    button.addEventListener("click", () => {
-      selectEvent(item.id);
-      $("#upload-card").scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-    card.append(button);
-    eventCards.append(card);
-  }
-
-  $("#event-count").textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
-  $("#event-showcase").hidden = false;
   if (!eventToken && events.length) selectEvent(events[0].id);
   eventsLoaded = true;
   updateButton();
 }
 
-loadEventShowcase().catch(error => {
-  console.error("Event collections could not be loaded:", error);
+loadEvents().catch(error => {
+  console.error("Events could not be loaded:", error);
   eventsLoaded = false;
   const select = $("#event-select");
   select.replaceChildren(new Option("Events unavailable", ""));
   $("#event-select-wrap").hidden = !eventToken;
-  $("#event-showcase").hidden = true;
-  showMessage("Event collections are temporarily unavailable. Please try again later.");
+  showMessage("Events are temporarily unavailable. Please try again later.");
   updateButton();
 });
 
@@ -449,8 +400,9 @@ async function renderPhoto(photo, job, headers, index) {
     select.disabled = false;
     open.addEventListener("click", () => showPhoto(readyPhoto));
     download.addEventListener("click", () => downloadPhoto(readyPhoto));
-  } catch {
-    name.textContent = "Couldn't load photo";
+  } catch (error) {
+    console.error(`Could not load matched photo ${photo.id}:`, error);
+    name.textContent = error instanceof Error ? error.message : "Couldn't load photo";
     open.setAttribute("aria-label", "Photo could not be loaded");
   } finally {
     settledPhotoCount += 1;

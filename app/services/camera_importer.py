@@ -10,13 +10,16 @@ from fastapi import UploadFile
 from app.api.photos import upload_event_photos
 from app.database.db import SessionLocal
 from app.database.models import Event, User
-from app.services.person_groups import init_person_groups
+from app.services.person_groups import EventSourceFolder, init_person_groups
 from app.services.photo_sources import (
     folder_is_processed,
     reconcile_photo_sources,
     source_paths_in,
 )
-from watch_camera_folder import scan_ready
+from watch_camera_folder import (
+    DEFAULT_SCAN_INTERVAL_SECONDS,
+    scan_ready,
+)
 
 LOG = logging.getLogger(__name__)
 MAX_FILE_SIZE = 100 * 1024 * 1024
@@ -24,20 +27,23 @@ MAX_FILES_PER_BATCH = 20
 
 
 async def run(folder, event_id):
+    folder = Path(folder).resolve(strict=True)
     init_person_groups()
     with SessionLocal() as db:
         event = db.query(Event).filter_by(id=event_id).first()
         if event is None or not db.query(User).filter_by(id=event.owner_id, is_active=True).first():
             raise ValueError("Choose an event with an active owner.")
+        db.merge(EventSourceFolder(event_id=event_id, folder_path=str(folder)))
+        db.commit()
     observed, processed, blocked = {}, {}, {}
     LOG.info("Watching %s for event %s", folder, event_id)
     while True:
         try:
             present_paths = source_paths_in(folder)
-            ready = scan_ready(folder, observed, processed, time.monotonic(), 5)
+            ready = scan_ready(folder, observed, processed, time.monotonic())
         except OSError:
             LOG.exception("Could not scan event folder; retrying without reconciling")
-            await asyncio.sleep(2)
+            await asyncio.sleep(DEFAULT_SCAN_INTERVAL_SECONDS)
             continue
         importable = []
         for path, signature in ready:

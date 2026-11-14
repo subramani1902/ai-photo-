@@ -148,7 +148,11 @@ def folder_is_processed(folder, processed, blocked=None):
     blocked = blocked or {}
     for relative_path in source_paths_in(root):
         path = root / relative_path
-        signature = (path.stat().st_size, path.stat().st_mtime_ns)
+        try:
+            stat = path.stat()
+        except OSError:
+            return False
+        signature = (stat.st_size, stat.st_mtime_ns)
         if processed.get(path) != signature or blocked.get(path) == signature:
             return False
     return True

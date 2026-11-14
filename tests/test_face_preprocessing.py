@@ -91,11 +91,14 @@ class FacePreprocessingTests(unittest.TestCase):
             self.assertEqual(processed.shape[:2], (427, 640))
 
     def test_event_showcase_sync_keeps_only_latest_local_photos(self):
-        event_query, photo_query, db = Mock(), Mock(), MagicMock()
+        event_query, source_query, photo_query, db = Mock(), Mock(), Mock(), MagicMock()
         db.__enter__.return_value = db
-        db.query.side_effect = [event_query, photo_query]
+        db.query.side_effect = [event_query, source_query, photo_query]
         event_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(
             event_name="Sample event"
+        )
+        source_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(
+            folder_path=str(Path.cwd())
         )
         photo_query.filter_by.return_value.order_by.return_value.limit.return_value.all.return_value = [
             SimpleNamespace(id=3, filename="three.jpg", file_path="unused"),
@@ -106,12 +109,17 @@ class FacePreprocessingTests(unittest.TestCase):
         current = Mock()
         current.json.return_value = {"event_name": "Sample event", "photo_ids": [1, 2, 3]}
 
-        with patch("app.database.db.SessionLocal", return_value=db), \
+        with patch("app.services.person_groups.init_person_groups"), \
+                patch("app.database.db.SessionLocal", return_value=db), \
                 patch.object(worker, "request", return_value=current) as request:
             worker.sync_showcase()
 
         self.assertEqual(request.call_args_list[0].args, ("GET", "/worker/showcase"))
         self.assertEqual(
             request.call_args_list[1].kwargs["json"],
-            {"event_name": "Sample event", "photo_ids": [3, 2, 1]}
+            {
+                "event_name": "Sample event",
+                "folder_name": Path.cwd().name,
+                "photo_ids": [3, 2, 1],
+            }
         )

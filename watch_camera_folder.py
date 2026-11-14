@@ -13,9 +13,17 @@ from app.services.photo_sources import folder_is_processed
 
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+DEFAULT_SCAN_INTERVAL_SECONDS = 0.5
+DEFAULT_STABLE_SECONDS = 0.5
 
 
-def scan_ready(folder, observed, processed, now, stable_seconds):
+def scan_ready(
+    folder,
+    observed,
+    processed,
+    now,
+    stable_seconds=DEFAULT_STABLE_SECONDS,
+):
     """Return files whose size and modification time have stopped changing."""
     ready = []
     for path in folder.rglob("*"):
@@ -58,8 +66,8 @@ def main():
     parser.add_argument("folder", type=Path, help="Folder used by the camera transfer app")
     parser.add_argument("--event-id", type=int, required=True)
     parser.add_argument("--server", default="http://127.0.0.1:8000")
-    parser.add_argument("--interval", type=float, default=2)
-    parser.add_argument("--stable-seconds", type=float, default=5)
+    parser.add_argument("--interval", type=float, default=DEFAULT_SCAN_INTERVAL_SECONDS)
+    parser.add_argument("--stable-seconds", type=float, default=DEFAULT_STABLE_SECONDS)
     args = parser.parse_args()
     folder = args.folder.resolve()
     if not folder.is_dir():

@@ -35,10 +35,21 @@ class PhotoSource(Base):
     __table_args__ = (UniqueConstraint("event_id", "relative_path"),)
 
 
+class EventSourceFolder(Base):
+    __tablename__ = "event_source_folders"
+    event_id = Column(Integer, ForeignKey("events.id"), primary_key=True)
+    folder_path = Column(String, nullable=False)
+
+
 def init_person_groups():
     Base.metadata.create_all(
         engine,
-        tables=[PersonGroup.__table__, PersonFace.__table__, PhotoSource.__table__],
+        tables=[
+            PersonGroup.__table__,
+            PersonFace.__table__,
+            PhotoSource.__table__,
+            EventSourceFolder.__table__,
+        ],
     )
 
 

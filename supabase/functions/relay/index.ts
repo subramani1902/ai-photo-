@@ -65,7 +65,7 @@ async function cleanExpired() {
 async function getEvent(secret: string, kind: "guest" | "worker") {
   if (!/^[a-f0-9]{64}$/i.test(secret)) fail("Invalid credentials", 401);
   const column = kind === "guest" ? "guest_token_hash" : "worker_token_hash";
-  const result = await db.from("photo_finder_events").select("id,name").eq(column, await hash(secret)).eq("active", true).maybeSingle();
+  const result = await db.from("photo_finder_events").select("id,name,current_folder,is_current").eq(column, await hash(secret)).eq("active", true).maybeSingle();
   const event = check(result);
   if (!event) fail("Invalid credentials", 401);
   return event!;
@@ -132,13 +132,15 @@ Deno.serve(async (req) => {
 
     if (path === "/guest/showcase" && req.method === "GET") {
       const eventToken = req.headers.get("x-event-token") || "";
+      const currentCutoff = new Date(Date.now() - 2 * 60_000).toISOString();
       const events = eventToken
         ? [await getEvent(eventToken, "guest")]
         : check(await db.from("photo_finder_events")
-          .select("id,name")
+          .select("id,name,current_folder,is_current")
           .eq("active", true)
-          .order("name")
-          .limit(50));
+          .eq("is_current", true)
+          .gt("current_updated_at", currentCutoff)
+          .limit(1));
       if (!events?.length) return json({ events: [] });
 
       const showcaseRows = check(await db.from("photo_finder_showcases")
@@ -155,7 +157,7 @@ Deno.serve(async (req) => {
       const relayBase = `${supabaseUrl}/functions/v1/relay`;
       const publicEvents = events.map((event) => ({
         id: event.id,
-        name: event.name,
+        name: event.is_current && event.current_folder ? event.current_folder : event.name,
         photos: (rowsByEvent.get(event.id) || []).map((row) => ({
           id: row.photo_id,
           filename: row.filename,
@@ -237,10 +239,18 @@ Deno.serve(async (req) => {
       if (path === "/worker/showcase" && req.method === "POST") {
         const payload = await req.json() as {
           event_name?: unknown;
+          folder_name?: unknown;
           photo_ids?: unknown;
         } | null;
         const photoIds = payload?.photo_ids;
+        const folderName = payload?.folder_name;
         if (payload?.event_name !== event.name || !Array.isArray(photoIds) ||
+            typeof folderName !== "string" ||
+            folderName.length < 1 ||
+            folderName.length > 255 ||
+            folderName.trim() !== folderName ||
+            folderName === "." || folderName === ".." ||
+            /[/\\\u0000-\u001f\u007f]/.test(folderName) ||
             photoIds.length > 3 ||
             photoIds.some((id: unknown) =>
               typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0
@@ -260,6 +270,12 @@ Deno.serve(async (req) => {
             .eq("event_id", event.id)
             .in("photo_id", stale.map((row) => row.photo_id)));
         }
+        const current = await db.rpc("photo_finder_set_current_folder", {
+          p_event_id: event.id,
+          p_folder_name: folderName,
+        });
+        if (current.error) throw current.error;
+        if (!current.data) fail("Could not select the current photo folder", 409);
         return json({ ok: true });
       }
       const showcaseUpload = path.match(/^\/worker\/showcase\/(\d+)$/);

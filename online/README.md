@@ -27,11 +27,15 @@ creates the private Storage bucket when it starts.
 
 Run the showcase migration
 [`20261110160000_create_private_event_showcases.sql`](../supabase/migrations/20261110160000_create_private_event_showcases.sql)
-as well. The laptop worker synchronizes up to three recent photos from the
-event's local folder to the private bucket every minute. The main website
-publicly lists active event folders and their previews using short-lived signed
-image URLs. Only activate events whose names and preview images are intended to
-be public. No QR-code generation is required.
+as well. Apply
+[`20261114140000_follow_current_photo_folder.sql`](../supabase/migrations/20261114140000_follow_current_photo_folder.sql)
+and deploy the relay function. The laptop worker synchronizes up to three
+recent photos from the watched folder to the private bucket every minute. The
+public website shows only the folder most recently reported by a running
+worker, using the watched folder's name; the listing disappears if the worker
+has not checked in for two minutes. Other events remain available through their
+event-specific QR links. Restart the importer and relay worker after applying
+the migration so the current watched folder is registered and published.
 
 For each additional event, create a matching local event and folder, then add
 an active `photo_finder_events` row whose `name` exactly matches that folder.
@@ -57,10 +61,10 @@ Import that folder into its local event ID, then start its worker:
 .\venv\Scripts\python.exe -m app.services.relay_worker --event-id 4 --secrets-file .env.wedding --relay-url https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay
 ```
 
-Anyone can open `https://ai-photo-k5fu.vercel.app`, select an active event by
-its folder name, and submit a selfie search. As imported photos are indexed,
-the worker refreshes that event's three most recent previews automatically.
-QR links remain supported as an optional way to open one specific event.
+Anyone can open `https://ai-photo-k5fu.vercel.app` to see the current watched
+folder and submit a selfie search. As imported photos are indexed, the worker
+refreshes that folder's three most recent previews automatically. QR links
+remain supported as an optional way to open one specific event.
 Search results can be filtered into Candid (one detected face) and Group (two
 or more detected faces). Photos without a detected face are not candidates for
 selfie matching.
@@ -116,12 +120,12 @@ HTML, JavaScript, CSS, and image assets.
 ## Start the laptop services
 
 From the repository root, run the camera importer in one PowerShell terminal.
-It watches `Candid`, imports stable photos into local event ID 3 (`Candid
+It watches `Aathif-Sahana`, imports stable photos into local event ID 3 (`Candid
 Test`), rebuilds the event's face index, and keeps that event synchronized
 with the folder:
 
 ```powershell
-.\venv\Scripts\python.exe -m app.services.camera_importer --folder .\Candid --event-id 3
+.\venv\Scripts\python.exe -m app.services.camera_importer --folder .\Aathif-Sahana --event-id 3
 ```
 
 In a second terminal, start the relay worker:
@@ -149,13 +153,42 @@ For folder-managed photos, the watched folder is the event's source of truth:
 new and replaced files are re-indexed, and deleted files are removed from the
 event's local search data. At startup, the importer waits until all supported
 images have been successfully scanned before removing untracked legacy photos.
+New files are checked every half-second and face analysis starts after their
+size and modification time stay unchanged for half a second; analysis duration
+depends on the photo and available hardware.
 Keep every photo that belongs to the event inside its watched folder; photos
 uploaded outside that folder are removed when the initial full sync completes.
 Preview images refresh automatically through the relay worker.
 
+## Replay a photo folder into the watched folder
+
+The copy utility preserves the source files, skips destination files that
+already exist, and publishes each completed copy atomically so the importer
+does not see a partial image. It waits 10 seconds between successful copies by
+default. Preview and selfie-match transfers to Supabase continue through the
+relay worker.
+
+From the repository root, preview the batch first, then start the copy:
+
+```powershell
+.\venv\Scripts\python.exe utilities\copy_photos_to_watched_folder.py --source D:\PUBERTY2 --destination D:\Event-AI-Photo-Finder\Aathif-Sahana --dry-run
+.\venv\Scripts\python.exe utilities\copy_photos_to_watched_folder.py --source D:\PUBERTY2 --destination D:\Event-AI-Photo-Finder\Aathif-Sahana --interval 10
+```
+
+In another PowerShell terminal, monitor importer progress and local face
+detection:
+
+```powershell
+.\venv\Scripts\python.exe -m utilities.check_photo_ingest --folder D:\Event-AI-Photo-Finder\Aathif-Sahana --event-id 3 --interval 5
+```
+
+`pending` should fall to zero as the importer indexes incoming photos.
+`detected_faces` is the number of face records found so far; a photo with no
+detectable face is still counted as indexed.
+
 ## Prototype limits
 
-- This setup is paired to local event ID 3 (`Candid Test`) and the current Supabase test event. Its intake folder is `Candid` at the repository root.
+- This setup is paired to local event ID 3 (`Candid Test`) and the current Supabase event. Its intake folder is `Aathif-Sahana` at the repository root.
 - Jobs expire after 24 hours. The migration does not configure a scheduled
   cleanup task; set up and test the maintenance secret and scheduler in the new
   Supabase project before relying on automatic removal of stored files.
