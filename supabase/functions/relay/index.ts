@@ -207,8 +207,28 @@ Deno.serve(async (req) => {
           ?? fail("Photo not found", 404);
         return new Response(blob, { headers: { ...cors, "Content-Type": blob.type || "application/octet-stream", "X-Content-Type-Options": "nosniff" } });
       }
-      const photos = job.status === "completed" ? check(await db.from("photo_finder_results").select("id,filename,similarity,face_count").eq("job_id", job.id).eq("uploaded", true).order("similarity", { ascending: false })) : [];
-      return json({ status: job.status, message: job.error_message, photos });
+      let photos = [];
+      let photosDetected = 0;
+      if (job.status === "completed") {
+        photos = check(await db.from("photo_finder_results")
+          .select("id,filename,similarity,face_count")
+          .eq("job_id", job.id)
+          .eq("uploaded", true)
+          .order("similarity", { ascending: false })) || [];
+        photosDetected = photos.length;
+      } else {
+        const progress = await db.from("photo_finder_results")
+          .select("id", { count: "exact", head: true })
+          .eq("job_id", job.id);
+        check(progress);
+        photosDetected = progress.count || 0;
+      }
+      return json({
+        status: job.status,
+        message: job.error_message,
+        photos,
+        photos_detected: photosDetected,
+      });
     }
 
     if (path === "/maintenance/cleanup" && req.method === "POST") {

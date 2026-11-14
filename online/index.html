@@ -90,10 +90,14 @@
     <button id="download-all" class="download-all" type="button" disabled>Download all (.zip) ↓</button>
   </div>
   <dialog id="preview" class="preview"><div class="preview-bar"><span>YOUR PHOTO</span><button id="close-preview" aria-label="Close photo preview">✕</button></div><img id="preview-image" alt="Selected event photo"><div class="preview-footer"><span id="preview-name"></span><button id="preview-download" class="primary">Download photo ↓</button></div></dialog>
-  <dialog id="loading-animation" class="scan-overlay" aria-labelledby="scan-title" aria-describedby="loading-status">
+  <dialog id="loading-animation" class="scan-overlay" aria-labelledby="scan-title" aria-describedby="loading-status scan-counts">
     <div class="scan-visual"><img id="scan-fallback" src="./camera-aperture.svg" alt=""><canvas id="scan-canvas" width="520" height="390" hidden aria-hidden="true"></canvas></div>
     <h2 id="scan-title">Finding your moments</h2>
     <p id="loading-status" role="status" aria-live="polite">Sending your selfie…</p>
+    <div id="scan-counts" class="scan-counts" role="status" aria-live="polite" aria-atomic="true">
+      <div><span>Photos detected</span><strong id="photos-detected">Scanning…</strong></div>
+      <div><span>Photos fetched</span><strong><span id="photos-fetched">0</span><small> / <span id="photos-total">0</span></small></strong></div>
+    </div>
     <button id="scan-playback" class="text-button" type="button" hidden>Pause animation</button>
     <p class="scan-note">Please keep this page open.</p>
   </dialog>

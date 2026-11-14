@@ -117,6 +117,14 @@ bundle the computer-vision dependencies, exceeding Vercel's function-size
 limit. With `online` as the root, the deployment contains only this directory's
 HTML, JavaScript, CSS, and image assets.
 
+The search loading dialog reports detected matches from the relay and counts
+photos as the guest browser fetches them. After changing the relay response,
+deploy the Edge Function as well as the Vercel site:
+
+```powershell
+npx supabase functions deploy relay
+```
+
 ## Start the laptop services
 
 From the repository root, run the camera importer in one PowerShell terminal.

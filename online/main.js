@@ -12,7 +12,7 @@ let objectUrls = [], downloadablePhotos = [], selectedPhoto = null, busy = false
 let selectedSelfie = null, cameraStream = null, cameraPreviewUrl = null;
 const selectedPhotoIndexes = new Set();
 let downloadedCount = 0;
-let galleryPhotoCount = 0, settledPhotoCount = 0;
+let galleryPhotoCount = 0, settledPhotoCount = 0, fetchedPhotoCount = 0;
 let galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
 let activeCategory = "all";
 const loadingAnimation = $("#loading-animation");
@@ -22,6 +22,12 @@ let eventsLoaded = Boolean(eventToken);
 function showMessage(text) {
   message.textContent = text;
   $("#loading-status").textContent = text;
+}
+
+function updateLoadingPhotoCounts(detected, fetched, total) {
+  $("#photos-detected").textContent = String(detected);
+  $("#photos-fetched").textContent = String(fetched);
+  $("#photos-total").textContent = String(total);
 }
 
 function setLoadingAnimation(show) {
@@ -370,6 +376,8 @@ async function renderPhoto(photo, job, headers, index) {
     const url = URL.createObjectURL(blob); objectUrls.push(url);
     const readyPhoto = { url, filename: photo.filename, blob };
     downloadablePhotos[index] = readyPhoto; image.src = url;
+    fetchedPhotoCount += 1;
+    updateLoadingPhotoCounts(galleryPhotoCount, fetchedPhotoCount, galleryPhotoCount);
     open.disabled = false; download.disabled = false;
     select.disabled = false;
     open.addEventListener("click", () => showPhoto(readyPhoto));
@@ -388,6 +396,7 @@ search.addEventListener("click", async () => {
   if (!consent.checked || !selectedSelfie || busy) return;
   busy = true; updateButton();
   setLoadingAnimation(true);
+  updateLoadingPhotoCounts("Scanning…", 0, 0);
   search.firstChild.textContent = "Finding your photos ";
   showMessage("Sending your selfie…");
   const body = new FormData(); body.append("file", selectedSelfie);
@@ -400,13 +409,15 @@ search.addEventListener("click", async () => {
     showMessage("Finding your photos…");
     let status;
     while (true) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       status = await (await request(`/guest/jobs/${job.job_id}`, { headers })).json();
       if (status.status === "completed") break;
       if (status.status === "failed") throw new Error(status.message || "Could not process the selfie.");
+      if (Number.isSafeInteger(status.photos_detected) && status.photos_detected >= 0) {
+        updateLoadingPhotoCounts(status.photos_detected, fetchedPhotoCount, status.photos_detected);
+      }
       showMessage(status.status === "processing" ? "Matching your face with event photos…" : "Waiting for the event laptop…");
     }
-    setLoadingAnimation(false);
     formSection.hidden = true; results.hidden = false; photos.replaceChildren();
     $("#gallery-action-bar").hidden = false;
     document.body.classList.add("gallery-visible");
@@ -415,6 +426,11 @@ search.addEventListener("click", async () => {
     downloadedCount = 0;
     galleryPhotoCount = status.photos.length;
     settledPhotoCount = 0;
+    fetchedPhotoCount = 0;
+    updateLoadingPhotoCounts(galleryPhotoCount, fetchedPhotoCount, galleryPhotoCount);
+    showMessage(galleryPhotoCount
+      ? `Found ${galleryPhotoCount} matching photos. Loading them now…`
+      : "No matching photos found.");
     galleryCategoryCounts = {
       all: galleryPhotoCount,
       candid: status.photos.filter(photo => Number(photo.face_count) === 1).length,
@@ -433,7 +449,7 @@ search.addEventListener("click", async () => {
       ? `We found ${count} photo${count === 1 ? "" : "s"}: ${galleryCategoryCounts.candid} candid · ${galleryCategoryCounts.group} group.`
       : "No photos found this time.";
     message.textContent = "";
-    status.photos.forEach((photo, index) => { void renderPhoto(photo, job, headers, index); });
+    await Promise.all(status.photos.map((photo, index) => renderPhoto(photo, job, headers, index)));
     updateSelectionControls();
     window.scrollTo({ top: 0, behavior: "auto" });
   } catch (error) { message.textContent = error.message; }
@@ -443,7 +459,7 @@ search.addEventListener("click", async () => {
 $("#again").addEventListener("click", () => {
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
-  galleryPhotoCount = 0; settledPhotoCount = 0;
+  galleryPhotoCount = 0; settledPhotoCount = 0; fetchedPhotoCount = 0;
   galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
   updateCategoryFilter("all");
   $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";
