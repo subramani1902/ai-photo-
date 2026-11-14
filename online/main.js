@@ -27,8 +27,6 @@ function showMessage(text) {
 
 function updateLoadingPhotoCounts(detected, fetched, total) {
   $("#photos-detected").textContent = String(detected);
-  $("#photos-fetched").textContent = String(fetched);
-  $("#photos-total").textContent = String(total);
   $("#gallery-photos-detected").textContent = String(detected);
   $("#gallery-photos-fetched").textContent = String(fetched);
   $("#gallery-photos-total").textContent = String(total);

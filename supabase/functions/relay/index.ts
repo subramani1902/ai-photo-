@@ -326,9 +326,21 @@ Deno.serve(async (req) => {
       }
       if (path === "/worker/claim" && req.method === "POST") {
         const now = new Date().toISOString();
-        const exhausted = check(await db.from("photo_finder_jobs").select("id,selfie_path").eq("event_id", event.id).eq("status", "processing").gte("attempt", 5).lt("lease_expires_at", now).limit(20));
+        const exhausted = check(await db.from("photo_finder_jobs")
+          .select("id,selfie_path,status")
+          .eq("event_id", event.id)
+          .gte("attempt", 5)
+          .or(`and(status.eq.processing,lease_expires_at.lt.${now}),status.eq.pending`)
+          .limit(20));
         for (const old of exhausted || []) {
-          check(await db.from("photo_finder_jobs").update({ status: "failed", error_message: "Unable to process this request. Please try again." }).eq("id", old.id).eq("status", "processing").lt("lease_expires_at", now));
+          let update = db.from("photo_finder_jobs")
+            .update({ status: "failed", error_message: "Unable to process this request. Please try again." })
+            .eq("id", old.id)
+            .eq("status", old.status)
+            .gte("attempt", 5);
+          if (old.status === "processing") update = update.lt("lease_expires_at", now);
+          const failed = check(await update.select("id").maybeSingle());
+          if (!failed) continue;
           await db.storage.from(bucket).remove([old.selfie_path]);
         }
         const candidates = check(await db.from("photo_finder_jobs").select("id,status,attempt,lease_id").eq("event_id", event.id).gt("expires_at", now).lt("attempt", 5).or(`status.eq.pending,and(status.eq.processing,lease_expires_at.lt.${now})`).order("created_at").limit(1));

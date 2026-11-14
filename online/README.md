@@ -77,11 +77,11 @@ To enable these result categories on an existing relay, apply
 deploy the relay function, redeploy the static website, and restart the event
 worker so it reports each matched photo's detected face count.
 
-The active-search limit is 25 per event, including queued and processing
-requests. The existing per-event intake limit remains 20 submissions per
-minute. One worker processes one search at a time; the remaining accepted
-searches wait in the queue. To change an existing relay, apply
-[`20261110180000_limit_active_searches_to_25.sql`](../supabase/migrations/20261110180000_limit_active_searches_to_25.sql).
+The active-search limit is 10 per event, including queued and processing
+requests. The per-event intake limit is 10 submissions per minute. One worker
+processes one search at a time; the remaining accepted searches wait in the
+queue. To change an existing relay, apply
+[`20261114203300_lower_search_rate_limits.sql`](../supabase/migrations/20261114203300_lower_search_rate_limits.sql).
 
 Before enabling the event, set its token hashes from the local `.env.relay`
 file. From the repository root, this command prints hashes only (not the
@@ -120,9 +120,9 @@ bundle the computer-vision dependencies, exceeding Vercel's function-size
 limit. With `online` as the root, the deployment contains only this directory's
 HTML, JavaScript, CSS, and image assets.
 
-The search loading dialog reports detected matches from the relay and counts
-photos as the guest browser fetches them. After changing the relay response,
-deploy the Edge Function as well as the Vercel site:
+The search loading dialog reports detected matches from the relay in one wide
+box. The gallery counts photos as the guest browser fetches them. After changing
+the relay response, deploy the Edge Function as well as the Vercel site:
 
 ```powershell
 npx supabase functions deploy relay
