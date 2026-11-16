@@ -238,36 +238,6 @@ async function request(path, options = {}) {
   return response;
 }
 
-function renderEventShowcase(event) {
-  const section = $("#event-showcase");
-  const gallery = $("#showcase-photos");
-  const previews = Array.isArray(event.photos)
-    ? event.photos.filter(photo => photo && typeof photo.url === "string" && photo.url &&
-      typeof photo.filename === "string")
-    : [];
-  gallery.replaceChildren();
-  if (!previews.length) {
-    section.hidden = true;
-    return;
-  }
-
-  $("#event-showcase-name").textContent = typeof event.name === "string" ? event.name : "";
-  previews.forEach((photo, index) => {
-    const figure = document.createElement("figure");
-    const image = document.createElement("img");
-    image.src = photo.url;
-    image.alt = `Recent event photo ${index + 1}`;
-    image.loading = "lazy";
-    image.addEventListener("error", () => {
-      figure.remove();
-      if (!gallery.childElementCount) section.hidden = true;
-    });
-    figure.append(image);
-    gallery.append(figure);
-  });
-  section.hidden = false;
-}
-
 async function loadEvents() {
   const headers = eventToken ? { "X-Event-Token": eventToken } : {};
   const response = await request("/guest/showcase", { headers });
@@ -276,7 +246,6 @@ async function loadEvents() {
 
   const event = events[0];
   selectedEventId = !eventToken && event ? String(event.id) : "";
-  if (event) renderEventShowcase(event);
   eventsLoaded = true;
   showMessage(!eventToken && !events.length ? "No event is currently available." : "");
   updateButton();
