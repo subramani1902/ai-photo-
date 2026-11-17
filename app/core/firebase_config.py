@@ -31,18 +31,17 @@ def env_bool(environment: Mapping[str, str], name: str) -> bool:
     return value == "true"
 
 
-def validate_emulator_host(value: str) -> None:
-    parsed = urlsplit("http://" + value)
+def validate_emulator_host(value: str, *, storage_url=False) -> None:
     try:
+        parsed = urlsplit(value if storage_url else "http://" + value)
         port = parsed.port
         host = parsed.hostname
         loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
     except (TypeError, ValueError):
-        loopback = False
-        port = None
-    if (not loopback or not port or parsed.username or parsed.password
+        raise FirebaseConfigurationError("Invalid loopback emulator address.") from None
+    if (parsed.scheme != "http" or not loopback or not port or parsed.username or parsed.password
             or parsed.path or parsed.query or parsed.fragment):
-        raise FirebaseConfigurationError("Emulators must use a loopback host:port without a scheme.")
+        raise FirebaseConfigurationError("Use a loopback host:port; STORAGE_EMULATOR_HOST requires an http:// prefix.")
 
 
 @dataclass(frozen=True)
@@ -72,8 +71,8 @@ class FirebaseSettings:
                 raise FirebaseConfigurationError("Emulators require a separate demo- project ID.")
             if not dict(hosts).get("FIREBASE_AUTH_EMULATOR_HOST"):
                 raise FirebaseConfigurationError("Set FIREBASE_AUTH_EMULATOR_HOST for emulator mode.")
-            for _, host in hosts:
-                validate_emulator_host(host)
+            for key, host in hosts:
+                validate_emulator_host(host, storage_url=key == "STORAGE_EMULATOR_HOST")
         elif project_id.startswith("demo-"):
             raise FirebaseConfigurationError("A demo- project requires explicit emulator mode.")
         credential = environment.get("FIREBASE_CREDENTIALS_FILE", "").strip()

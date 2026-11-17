@@ -36,7 +36,9 @@ export function readServerSettings(env = process.env) {
   if (Object.keys(emulatorHosts).length && !emulatorMode) throw new FirebaseConfigurationError("Emulator variables are forbidden in production mode.");
   if (emulatorMode) {
     if (!projectId.startsWith("demo-") || !emulatorHosts.FIREBASE_AUTH_EMULATOR_HOST) throw new FirebaseConfigurationError("Emulators require a demo- project and an explicit Auth emulator host.");
-    for (const host of Object.values(emulatorHosts)) {
+    for (const [key, address] of Object.entries(emulatorHosts)) {
+      if (key === "STORAGE_EMULATOR_HOST" && !address.startsWith("http://")) throw new FirebaseConfigurationError("STORAGE_EMULATOR_HOST requires an http:// loopback URL.");
+      const host = key === "STORAGE_EMULATOR_HOST" ? address.slice(7) : address;
       if (!/^(localhost|127\.0\.0\.1|\[::1\]):[0-9]+$/.test(host)) throw new FirebaseConfigurationError("Emulators must use a loopback host:port.");
       const port = Number(host.slice(host.lastIndexOf(":") + 1));
       if (port < 1 || port > 65535) throw new FirebaseConfigurationError("Invalid emulator port.");

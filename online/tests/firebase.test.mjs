@@ -35,6 +35,8 @@ test("production rejects emulator bypasses and malformed credential sources", ()
 test("emulators require a separate demo project and loopback host", () => {
   const env = { FIREBASE_ENABLED: "true", FIREBASE_PROJECT_ID: "demo-local", FIREBASE_EMULATOR_MODE: "true", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099" };
   assert.equal(readServerSettings(env).emulatorMode, true);
+  assert.equal(readServerSettings({ ...env, STORAGE_EMULATOR_HOST: "http://127.0.0.1:9199" }).emulatorMode, true);
+  assert.throws(() => readServerSettings({ ...env, STORAGE_EMULATOR_HOST: "127.0.0.1:9199" }));
   for (const host of ["remote.test:9099", "http://127.0.0.1:9099", "localhost:99999"]) {
     assert.throws(() => readServerSettings({ ...env, FIREBASE_AUTH_EMULATOR_HOST: host }));
   }

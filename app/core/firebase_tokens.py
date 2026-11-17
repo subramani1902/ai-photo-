@@ -43,6 +43,8 @@ def verify_firebase_id_token(token: str) -> FirebasePrincipal:
     except Exception:
         # Credential/transport failures never downgrade to unverified or local JWTs.
         raise FirebaseAuthUnavailable("Firebase authentication is temporarily unavailable.") from None
+    if not isinstance(claims, dict) or not isinstance(claims.get("firebase", {}), dict):
+        raise InvalidFirebaseToken("Invalid or expired Firebase ID token.")
     uid = claims.get("uid")
     if (not isinstance(uid, str) or not 1 <= len(uid) <= 128
             or claims.get("sub") != uid or claims.get("aud") != settings.project_id

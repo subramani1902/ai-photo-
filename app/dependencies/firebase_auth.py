@@ -47,6 +47,7 @@ def get_current_firebase_admin(
     # Neither an email match nor an admin custom claim grants administrator access.
     if user is None or principal.claims.get("email_verified") is not True:
         raise HTTPException(403, "Administrator access denied.")
-    if principal.claims.get("email", "").strip().lower() != user.email.strip().lower():
+    email = principal.claims.get("email")
+    if not isinstance(email, str) or email.strip().lower() != user.email.strip().lower():
         raise HTTPException(403, "Administrator access denied.")
     return user

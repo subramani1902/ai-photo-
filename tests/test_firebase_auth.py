@@ -75,6 +75,15 @@ class FirebaseConfigurationTests(unittest.TestCase):
             with self.assertRaises(FirebaseConfigurationError):
                 firebase_core.get_storage_bucket()
 
+    def test_storage_emulator_uses_the_google_sdk_url_format(self):
+        environment = {"FIREBASE_ENABLED": "true", "FIREBASE_PROJECT_ID": "demo-local",
+                       "FIREBASE_EMULATOR_MODE": "true", "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",
+                       "STORAGE_EMULATOR_HOST": "http://127.0.0.1:9199"}
+        self.assertIn(("STORAGE_EMULATOR_HOST", "http://127.0.0.1:9199"), FirebaseSettings.from_env(environment).emulator_hosts)
+        for address in ["127.0.0.1:9199", "http://external.test:9199", "http://127.0.0.1:9199/path", "http://[invalid"]:
+            with self.subTest(address=address), self.assertRaises(FirebaseConfigurationError):
+                FirebaseSettings.from_env({**environment, "STORAGE_EMULATOR_HOST": address})
+
     def test_credentials_in_public_directory_and_other_projects_are_rejected(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)
