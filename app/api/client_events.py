@@ -83,6 +83,26 @@ def checked_event(event_id, principal, db, store, *, operation="browse"):
     return event, permission
 
 
+def checked_event_by_folder(folder_name, principal, db, store):
+    limits.check(principal.uid, "browse", 120)
+    candidates = (db.query(Event).join(User, User.id == Event.owner_id)
+                  .filter(Event.event_name == folder_name, User.is_active.is_(True)).all())
+    accessible = []
+    for event in candidates:
+        try:
+            permission = store.authorize(principal.uid, event.id, event.owner_id)
+        except EventAccessDenied:
+            continue
+        except EventAccessUnavailable:
+            raise HTTPException(503, "The gallery is temporarily unavailable.") from None
+        accessible.append((event, permission))
+    if len(accessible) > 1:
+        raise HTTPException(409, "More than one shared event uses this folder name. Ask your photographer for the numeric ID.")
+    if not accessible:
+        raise HTTPException(403, "This event is not available to your account.")
+    return accessible[0]
+
+
 def photo_for_event(db, event, photo_id):
     photo = db.query(Photo).filter_by(id=photo_id, event_id=event.id).one_or_none()
     if photo is None:
@@ -120,10 +140,22 @@ def preview_file(path, photo_id):
 
 
 @router.get("/events/{event_id}")
-def event_gallery(response: Response, event_id: int = ApiPath(gt=0, le=2147483647),
+def event_gallery(response: Response, event_id: str = ApiPath(min_length=1, max_length=150),
                   principal: FirebasePrincipal = Depends(client_account), db: Session = Depends(get_db),
                   store: ClientEventStore = Depends(get_client_event_store)):
-    event, permission = checked_event(event_id, principal, db, store)
+    named_events = (db.query(Event.id)
+                    .join(User, User.id == Event.owner_id)
+                    .filter(Event.event_name == event_id, User.is_active.is_(True))
+                    .limit(1).all())
+    if named_events:
+        event, permission = checked_event_by_folder(event_id, principal, db, store)
+    elif event_id.isascii() and event_id.isdecimal():
+        numeric_id = int(event_id)
+        if numeric_id > 2147483647:
+            raise HTTPException(422, "Event ID is outside the supported range.")
+        event, permission = checked_event(numeric_id, principal, db, store)
+    else:
+        raise HTTPException(403, "This event is not available to your account.")
     response.headers.update(PRIVATE_HEADERS)
     return {"event_id": event.id, "event_name": event.event_name,
             "permissions": sorted(permission.permissions), "expires_at": permission.expires_at.isoformat(),

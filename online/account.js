@@ -135,7 +135,7 @@ $("#check-verification").addEventListener("click", async () => {
   try {
     await client.refreshUser();
     const user = await showAccount();
-    message.textContent = user?.emailVerified ? "Email verified. Enter your Event ID." : "Your email is not verified yet. Open the link in your email first.";
+    message.textContent = user?.emailVerified ? "Email verified. Enter your event folder name." : "Your email is not verified yet. Open the link in your email first.";
   } catch (error) { message.textContent = errorMessage(error); }
   finally { setBusy(false); }
 });
@@ -145,7 +145,7 @@ $("#event-form").addEventListener("submit", async event => {
   if (busy || verificationPending || !event.target.reportValidity()) return;
   setBusy(true);
   try {
-    await gallery.open(Number($("#client-event-id").value));
+    await gallery.open($("#client-event-id").value);
     $(".account-intro").hidden = true;
     message.textContent = "";
   } catch (error) { message.textContent = error.message; }

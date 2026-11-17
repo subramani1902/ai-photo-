@@ -35,7 +35,6 @@ class GalleryInviteTests(unittest.TestCase):
                     patch("utilities.manage_photo_gallery.remote_manifest", return_value=self.manifest[3]), \
                     patch("utilities.manage_photo_gallery.secrets.token_urlsafe", return_value=password), \
                     patch("utilities.manage_photo_gallery.requests.post", return_value=response) as create, \
-                    patch("utilities.manage_photo_gallery.getpass", side_effect=AssertionError("No interactive password needed")), \
                     contextlib.redirect_stdout(printed):
                 self.assertEqual(main(), 0)
             saved = json.loads(output.read_text())
@@ -44,6 +43,27 @@ class GalleryInviteTests(unittest.TestCase):
             self.assertEqual(saved["photos_ready_at_creation"], 1)
             self.assertEqual(create.call_args.kwargs["json"]["password"], password)
             self.assertNotIn(password, printed.getvalue())
+
+    def test_event_date_is_used_as_the_gallery_password(self):
+        response = Mock()
+        response.json.return_value = {"token": "a" * 64, "gallery_id": "test-gallery", "expires_at": "2026-12-18T00:00:00Z"}
+        with patch("sys.argv", ["gallery", "--event-id", "3", "--allow-indexing", "--event-date", "2026-11-18"]), \
+                patch("utilities.manage_photo_gallery.dotenv_values", return_value={"PHOTO_FINDER_WORKER_SECRET": "synthetic"}), \
+                patch("utilities.manage_photo_gallery.local_manifest", return_value=self.manifest), \
+                patch("utilities.manage_photo_gallery.remote_manifest", return_value=self.manifest[3]), \
+                patch("utilities.manage_photo_gallery.requests.post", return_value=response) as create, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(), 0)
+        self.assertEqual(create.call_args.kwargs["json"], {
+            "event_date": "2026-11-18", "expires_days": 30,
+        })
+
+    def test_invalid_event_date_is_rejected(self):
+        with patch("sys.argv", ["gallery", "--event-id", "3", "--event-date", "2026-02-30"]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                main()
+        self.assertEqual(error.exception.code, 2)
 
     def test_growing_album_rejects_a_foreign_remote_manifest(self):
         with patch("sys.argv", ["gallery", "--event-id", "3", "--allow-indexing", "--wait-seconds", "1"]), \

@@ -42,8 +42,8 @@ test("actual guest page reveals partial results, keeps filters and enables downl
     querySelectorAll: selector => selector === ".category-filter" ? categories : [],
   };
   element("#results").hidden = true;
-  const a = { id: "a", filename: "candid.jpg", face_count: 1 };
-  const b = { id: "b", filename: "group.jpg", face_count: 4 };
+  const a = { id: "a", filename: "candid.jpg", face_count: 1, folder_name: "Wedding" };
+  const b = { id: "b", filename: "group.jpg", face_count: 4, folder_name: "Reception" };
   let polls = 0, sawPartial = false;
   const request = async (url, options = {}) => {
     const path = new URL(url).pathname.split("/relay").pop();
@@ -70,7 +70,9 @@ test("actual guest page reveals partial results, keeps filters and enables downl
       assert.equal(element("#results").hidden, false);
       assert.equal(element("#form-section").hidden, true);
       assert.equal(element("#loading-animation").open, false);
-      const [card] = element("#photos").children;
+      const wedding = element("#photos").children.find(section => section.dataset.folderName === "Wedding");
+      assert.ok(wedding);
+      const [card] = wedding.children[1].children;
       assert.equal(card.dataset.category, "candid");
       assert.equal(card.children[0].disabled, false, "Ready photos must open during processing");
       assert.equal(card.children[2].children[1].disabled, false, "Individual downloads must already work");
@@ -85,8 +87,10 @@ test("actual guest page reveals partial results, keeps filters and enables downl
   await element("#selfie").emit("change");
   await element("#search").emit("click");
   assert.equal(sawPartial, true);
-  assert.equal(element("#photos").children.length, 2);
-  assert.equal(element("#photos").children[1].hidden, false, "A newly arriving Group photo respects the active filter");
+  assert.deepEqual(element("#photos").children.map(section => section.dataset.folderName), ["Wedding", "Reception"]);
+  const reception = element("#photos").children[1];
+  assert.equal(reception.hidden, false, "A newly arriving Reception photo respects the active filter");
+  assert.equal(reception.children[1].children.length, 1);
   assert.equal(element("#download-all").disabled, false);
   assert.equal(element("#gallery-photos-fetched").textContent, "2");
   assert.equal(element("#gallery-load-status").textContent, "All 2 photos are ready.");

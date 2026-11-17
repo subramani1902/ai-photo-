@@ -90,7 +90,8 @@ authorized matches to private temporary storage for guest downloads; keep the
 external drive connected while searches are being processed.
 Search results can be filtered into Candid (one detected face) and Group (two
 or more detected faces). Photos without a detected face are not candidates for
-selfie matching.
+selfie matching. AI search results are also grouped into sections using each
+photo's indexed source folder, such as Wedding and Reception.
 
 To enable these result categories on an existing relay, apply
 [`20261110170000_add_result_face_count.sql`](../supabase/migrations/20261110170000_add_result_face_count.sql),
@@ -243,8 +244,9 @@ Apply the gallery migration and deploy the relay function and Vercel website
 before creating a link. The worker must be running. By default the importer must
 have finished syncing the entire folder. This command checks that every supported
 file in the watched folder is tracked locally and that the relay manifest is
-up to date; it refuses to create a partial album. It then prompts for a
-12-128 character password and creates a link that expires after 30 days:
+up to date; it refuses to create a partial album. It then prompts for the
+event date in `YYYY-MM-DD` format and uses that date as the gallery password.
+The link expires after 30 days:
 
 ```powershell
 .\venv\Scripts\python.exe -m utilities.manage_photo_gallery --event-id 3 --secrets-file .env.relay
@@ -253,17 +255,20 @@ up to date; it refuses to create a partial album. It then prompts for a
 To explicitly open an album while indexing continues, add `--allow-indexing`.
 The link includes the current authorized manifest and gains photos as the
 importer and relay synchronize. It must not be described as a completed album
-until the importer reports zero pending files. To generate a strong password
-and save the actual link and password privately, use:
+until the importer reports zero pending files. To use a generated strong
+password instead and save the actual link and password privately, use:
 
 ```powershell
 .\venv\Scripts\python.exe -B -m utilities.manage_photo_gallery --event-id 3 --allow-indexing --generate-password --output .secrets/event-3-gallery.json
 ```
 
 The output file must be new and inside the ignored `.secrets` folder. Generated
-passwords are not printed to the terminal. Do not publish this file or embed its
-private link into the public website. The website menu's **Private full gallery**
-entry opens the login page; clients use their individual shared link and password.
+passwords are not printed to the terminal. To set the event date without a
+prompt, pass `--event-date YYYY-MM-DD`. Do not publish the output file or embed
+its private link into the public website. The website menu's **Private full
+gallery** entry opens the login page; clients use their individual shared link
+and password. Event dates are easy to guess, so only share the private gallery
+link with the intended clients.
 
 Clients can choose **♡ Choose favourite**, review **Show favourites**, then select
 **Download editor CSV**. The CSV contains selection order, event ID/name, photo

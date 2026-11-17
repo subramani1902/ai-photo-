@@ -1,7 +1,7 @@
 """Create or revoke a password-protected gallery link for a local photo event."""
 
 import argparse
-from getpass import getpass
+from datetime import date
 import json
 import secrets
 import sys
@@ -19,6 +19,13 @@ from app.services.photo_sources import source_paths_in
 
 DEFAULT_RELAY_URL = "https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay"
 DEFAULT_SITE_URL = "https://sm-photo-studio.vercel.app"
+
+
+def is_event_date(value):
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except (TypeError, ValueError):
+        return False
 
 
 def local_manifest(event_id):
@@ -96,7 +103,8 @@ def main():
     parser.add_argument("--allow-indexing", action="store_true",
                         help="Open an album that gains new photos as indexing continues")
     parser.add_argument("--generate-password", action="store_true",
-                        help="Generate a strong gallery password and save it to --output")
+                        help="Use a generated strong password instead of the event date")
+    parser.add_argument("--event-date", help="Use this event date (YYYY-MM-DD) as the gallery password")
     parser.add_argument("--output", type=Path, help="Save private gallery details under the ignored .secrets folder")
     parser.add_argument("--revoke-id", help="Revoke an existing gallery ID instead of creating one")
     args = parser.parse_args()
@@ -115,6 +123,10 @@ def main():
         parser.error("--expires-days must be between 1 and 90.")
     if args.generate_password and not args.output:
         parser.error("--generate-password requires --output so the password is saved privately.")
+    if args.generate_password and args.event_date:
+        parser.error("--generate-password and --event-date cannot be used together.")
+    if args.event_date and not is_event_date(args.event_date):
+        parser.error("--event-date must be a real date in YYYY-MM-DD format.")
     if args.output:
         destination = args.output.resolve()
         private_root = (Path.cwd() / ".secrets").resolve()
@@ -176,16 +188,20 @@ def main():
             )
         time.sleep(10)
 
-    password = secrets.token_urlsafe(24) if args.generate_password else getpass("Set a gallery password (12-128 characters): ")
-    if len(password) < 12 or len(password) > 128:
-        parser.error("Gallery password must be 12-128 characters.")
-    if not args.generate_password and password != getpass("Re-enter the gallery password: "):
-        parser.error("Passwords do not match.")
+    if args.generate_password:
+        password = secrets.token_urlsafe(24)
+        password_payload = {"password": password}
+    else:
+        event_date = args.event_date or input("Event date/password (YYYY-MM-DD): ").strip()
+        if not is_event_date(event_date):
+            parser.error("Event date/password must be a real date in YYYY-MM-DD format.")
+        password = event_date
+        password_payload = {"event_date": event_date}
 
     response = requests.post(
         f"{args.relay_url.rstrip('/')}/worker/gallery/create",
         headers=headers,
-        json={"password": password, "expires_days": args.expires_days},
+        json={**password_payload, "expires_days": args.expires_days},
         timeout=(10, 60),
         allow_redirects=False,
     )
@@ -203,7 +219,10 @@ def main():
     print(f"\nGallery link: {link}")
     print(f"Gallery ID (keep this to revoke): {result['gallery_id']}")
     print(f"Expires: {result['expires_at']}")
-    print("Share the password you entered separately from the link.")
+    if args.generate_password:
+        print("Share the generated password separately from the link.")
+    else:
+        print("Share the event date as the password, separately from the link.")
     return 0
 
 

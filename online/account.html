@@ -59,12 +59,12 @@
             <button id="check-verification" class="text-button" type="button">I’ve verified my email</button>
           </div>
           <form id="event-form" aria-label="Open your event">
-            <label class="account-field" for="client-event-id">Event ID
-              <input id="client-event-id" name="event-id" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,9}" maxlength="10" autocomplete="off" placeholder="Event ID from your photographer" required>
+            <label class="account-field" for="client-event-id">Event folder name
+              <input id="client-event-id" name="event-id" type="text" maxlength="150" autocomplete="off" placeholder="Folder name shared by your photographer" required>
             </label>
             <button id="open-event" class="primary" type="submit">Open my photos ↗</button>
           </form>
-          <p class="account-help">Your photographer must share the event with your account.</p>
+          <p class="account-help">Enter the exact folder name shared by your photographer. Numeric Event IDs still work when no folder has that name.</p>
           <details class="account-details"><summary>Your account ID</summary><code id="account-uid"></code></details>
           <button id="sign-out" class="primary" type="button">Sign out</button>
         </div>

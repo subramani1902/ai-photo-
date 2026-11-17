@@ -174,3 +174,30 @@ test("Firebase CSV loads favourites from every page even if their photos were ne
   assert.equal(calls.filter(url => url.includes("category=favourites")).length, 2);
   assert.equal(calls.some(url => url.includes("/preview")), false);
 });
+
+test("client gallery accepts a folder name and continues using its internal event ID", async () => {
+  const s = surface();
+  const calls = [];
+  const fetcher = async url => {
+    calls.push(url);
+    if (url.endsWith("/events/Private%20wedding")) return Response.json({
+      event_id: 3, event_name: "Private wedding", permissions: ["view"],
+      expires_at: "2027-01-01T00:00:00Z",
+    });
+    if (url.endsWith("/events/3/photos?after=0&limit=24&category=all")) {
+      return Response.json({ photos: [], next_after: null });
+    }
+    assert.fail(`Unexpected request: ${url}`);
+  };
+  const create = vm.runInNewContext(clientCode + "\ncreateClientGallery;", {
+    ...s.globals, fetch: fetcher, window: { addEventListener() {} },
+  });
+  const gallery = create({
+    client: { getIdToken: async () => "verified-test-token" },
+    configuration: { photoApiBaseUrl: "https://private-api.example" },
+  });
+  await gallery.open("Private wedding");
+  assert.ok(calls.some(url => url.endsWith("/events/Private%20wedding")));
+  assert.ok(calls.some(url => url.endsWith("/events/3/photos?after=0&limit=24&category=all")));
+  assert.equal(s.element("#client-event-name").textContent, "Private wedding");
+});

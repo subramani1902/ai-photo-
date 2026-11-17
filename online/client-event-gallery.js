@@ -136,18 +136,21 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
     }
   }
 
-  async function open(eventId) {
-    if (!Number.isSafeInteger(eventId) || eventId < 1 || eventId > 2147483647) throw new Error("Enter a valid Event ID.");
+  async function open(eventIdentifier) {
+    const identifier = String(eventIdentifier ?? "").trim();
+    if (!identifier || identifier.length > 150 || /[/\\\u0000-\u001f\u007f]/.test(identifier)) {
+      throw new Error("Enter the exact event folder name shared by your photographer.");
+    }
     const config = configuration ?? (await import("./firebase-config.js")).default;
     if (!config.photoApiBaseUrl) throw new Error("Your studio gallery service is not available yet. Please contact your photographer.");
     const parsed = new URL(config.photoApiBaseUrl);
     if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) throw new Error("The gallery is temporarily unavailable.");
     base = parsed.origin;
     resetPhotos();
-    const details = await (await request("/api/firebase/events/" + eventId)).json();
+    const details = await (await request("/api/firebase/events/" + encodeURIComponent(identifier))).json();
     event = details; category = "all";
     $("#client-event-name").textContent = details.event_name;
-    $("#client-event-summary").textContent = "Event " + details.event_id + " · Available until " + new Date(details.expires_at).toLocaleDateString();
+    $("#client-event-summary").textContent = "Folder: " + details.event_name + " · Available until " + new Date(details.expires_at).toLocaleDateString();
     document.querySelectorAll("[data-client-category]").forEach(button => {
       const active = button.dataset.clientCategory === "all";
       button.setAttribute("aria-pressed", String(active)); button.classList.toggle("active", active);

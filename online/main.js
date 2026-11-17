@@ -18,6 +18,7 @@ let gallerySearchComplete = false;
 let galleryDeliveryStopped = false;
 let galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
 let activeCategory = "all";
+const folderSections = new Map();
 let galleryLoadGeneration = 0, photoFetchController = null;
 const loadingAnimation = $("#loading-animation");
 let scanPlayer = null, loadingVersion = 0;
@@ -217,11 +218,48 @@ function updateCategoryFilter(category) {
   photos.querySelectorAll(".result").forEach(card => {
     card.hidden = category !== "all" && card.dataset.category !== category;
   });
+  updateFolderVisibility();
   const empty = $("#empty");
   empty.hidden = visibleCount > 0;
   empty.textContent = galleryCategoryCounts.all
     ? `No matching ${category} photos were found.`
     : "No matching photos found yet. Try a clear photo of your face, or check back after more event photos are added.";
+}
+function getFolderSection(folderName) {
+  const rawName = typeof folderName === "string" && folderName.trim()
+    ? folderName.trim()
+    : "Other photos";
+  const name = /^wedding$/i.test(rawName) ? "Wedding"
+    : /^reception$/i.test(rawName) ? "Reception"
+      : rawName;
+  if (folderSections.has(name)) return folderSections.get(name);
+
+  const section = document.createElement("section");
+  section.className = "photo-folder-section";
+  section.dataset.folderName = name;
+  const heading = document.createElement("div");
+  heading.className = "photo-folder-heading";
+  const title = document.createElement("h2");
+  title.textContent = name;
+  const count = document.createElement("span");
+  count.className = "photo-folder-count";
+  count.textContent = "0 photos";
+  heading.append(title, count);
+  const grid = document.createElement("div");
+  grid.className = "photo-folder-grid";
+  section.append(heading, grid);
+  const folder = { name, section, grid, count };
+  folderSections.set(name, folder);
+  const priority = value => value === "Wedding" ? 0 : value === "Reception" ? 1 : 2;
+  const orderedFolders = [...folderSections.values()].sort((left, right) =>
+    priority(left.name) - priority(right.name) || left.name.localeCompare(right.name));
+  photos.replaceChildren(...orderedFolders.map(item => item.section));
+  return folder;
+}
+function updateFolderVisibility() {
+  for (const { section, grid } of folderSections.values()) {
+    section.hidden = !Array.from(grid.querySelectorAll(".result")).some(card => !card.hidden);
+  }
 }
 document.querySelectorAll(".category-filter").forEach(button => {
   button.addEventListener("click", () => updateCategoryFilter(button.dataset.category));
@@ -341,6 +379,7 @@ $("#close-preview").addEventListener("click", () => preview.close());
 $("#preview-download").addEventListener("click", () => { if (selectedPhoto) downloadPhoto(selectedPhoto); });
 
 async function renderPhoto(photo, job, headers, index, generation, signal) {
+  const folder = getFolderSection(photo.folder_name);
   const card = document.createElement("article"); card.className = "result";
   card.dataset.category = Number(photo.face_count) > 1 ? "group" : "candid";
   card.hidden = activeCategory !== "all" && card.dataset.category !== activeCategory;
@@ -368,7 +407,9 @@ async function renderPhoto(photo, job, headers, index, generation, signal) {
   const name = document.createElement("span"); name.className = "photo-name"; name.textContent = photo.filename;
   const download = document.createElement("button"); download.className = "download"; download.textContent = "↓";
   download.setAttribute("aria-label", "Download " + photo.filename); download.disabled = true;
-  meta.append(name, download); card.append(open, selectLabel, meta); photos.append(card);
+  meta.append(name, download); card.append(open, selectLabel, meta); folder.grid.append(card);
+  folder.count.textContent = `${folder.grid.children.length} ${folder.grid.children.length === 1 ? "photo" : "photos"}`;
+  updateFolderVisibility();
   try {
     const blob = await (await request(`/guest/jobs/${job.job_id}/photos/${photo.id}`, {
       headers,
@@ -450,6 +491,7 @@ search.addEventListener("click", async () => {
         if (!galleryOpened && (available.length || gallerySearchComplete)) {
           galleryOpened = true;
           formSection.hidden = true; results.hidden = false; photos.replaceChildren();
+          folderSections.clear();
           $("#gallery-action-bar").hidden = false;
           document.body.classList.add("gallery-visible");
           downloadablePhotos = []; selectedPhotoIndexes.clear(); downloadedCount = 0;
@@ -459,6 +501,7 @@ search.addEventListener("click", async () => {
           setLoadingAnimation(false);
           window.scrollTo({ top: 0, behavior: "auto" });
         }
+        available.forEach(photo => getFolderSection(photo.folder_name));
         if (!galleryOpened) {
           showMessage(status.status === "processing"
             ? (galleryPhotoCount ? `Preparing your ${galleryPhotoCount} matched photos…` : "Matching your face with event photos…")
@@ -505,6 +548,7 @@ $("#again").addEventListener("click", () => {
   photoFetchController = null;
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
+  folderSections.clear();
   galleryPhotoCount = 0; settledPhotoCount = 0; fetchedPhotoCount = 0;
   gallerySearchComplete = false;
   galleryDeliveryStopped = false;

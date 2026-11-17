@@ -119,6 +119,19 @@ class ClientGalleryTests(unittest.TestCase):
             self.assertEqual(self.http.get(self.url + suffix).status_code, 403)
         self.assertEqual(self.http.post(self.url + "/download-zip", json={"photo_ids": [101]}).status_code, 403)
 
+    def test_exact_folder_name_opens_only_an_event_shared_with_the_account(self):
+        response = self.http.get("/api/firebase/events/Private%20wedding")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["event_id"], 1)
+        self.assertEqual(response.json()["event_name"], "Private wedding")
+        self.assertEqual(self.http.get("/api/firebase/events/Other%20wedding").status_code, 403)
+
+    def test_duplicate_shared_folder_names_require_numeric_event_id(self):
+        self.db.add(Event(id=3, event_name="Private wedding", owner_id=2))
+        self.db.commit()
+        self.store.data[(3, "alice")] = permission_data("alice", 3, 2)
+        self.assertEqual(self.http.get("/api/firebase/events/Private%20wedding").status_code, 409)
+
     def test_missing_identity_unverified_identity_and_disabled_owner_are_denied(self):
         self.principal = FirebasePrincipal("alice", "demo-gallery", {"email_verified": False})
         self.assertEqual(self.http.get(self.url).status_code, 403)

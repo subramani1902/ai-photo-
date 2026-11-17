@@ -126,6 +126,12 @@ async function deriveGalleryPassword(password: string, salt: string, iterations:
   return toHex(derived);
 }
 
+function isEventDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 function secureEqual(left: string, right: string) {
   if (left.length !== right.length) return false;
   let difference = 0;
@@ -302,14 +308,31 @@ Deno.serve(async (req) => {
           ?? fail("Photo not found", 404);
         return new Response(blob, { headers: { ...cors, "Content-Type": blob.type || "application/octet-stream", "X-Content-Type-Options": "nosniff" } });
       }
-      let photos: Array<{ id: string; filename: string; similarity: number; face_count: number }> = [];
+      let photos: Array<{ id: string; filename: string; similarity: number; face_count: number; folder_name: string }> = [];
       let photosDetected = 0;
       if (job.status === "processing" || job.status === "completed") {
-        photos = check(await db.from("photo_finder_results")
-          .select("id,filename,similarity,face_count")
+        const matchedPhotos = check(await db.from("photo_finder_results")
+          .select("id,photo_id,filename,similarity,face_count")
           .eq("job_id", job.id)
           .eq("uploaded", true)
           .order("similarity", { ascending: false })) || [];
+        if (matchedPhotos.length) {
+          const sources = check(await db.from("photo_finder_gallery_photos")
+            .select("photo_id,source_path")
+            .eq("event_id", job.event_id)
+            .in("photo_id", matchedPhotos.map((photo) => photo.photo_id))) || [];
+          const folderByPhoto = new Map(sources.map((source) => [
+            Number(source.photo_id),
+            source.source_path.includes("/") ? source.source_path.split("/")[0] : "Other photos",
+          ]));
+          photos = matchedPhotos.map((photo) => ({
+            id: photo.id,
+            filename: photo.filename,
+            similarity: photo.similarity,
+            face_count: photo.face_count,
+            folder_name: folderByPhoto.get(Number(photo.photo_id)) || "Other photos",
+          }));
+        }
         photosDetected = photos.length;
       }
       if (job.status !== "completed") {
@@ -726,12 +749,24 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       if (path === "/worker/gallery/create" && req.method === "POST") {
-        const payload = await req.json() as { password?: unknown; expires_days?: unknown } | null;
-        const password = payload?.password;
+        const payload = await req.json() as { password?: unknown; event_date?: unknown; expires_days?: unknown } | null;
+        const suppliedPassword = payload?.password;
+        const eventDate = payload?.event_date;
         const expiresDays = payload?.expires_days;
-        if (typeof password !== "string" || password.length < 12 || password.length > 128 ||
-            typeof expiresDays !== "number" || !Number.isInteger(expiresDays) ||
-            expiresDays < 1 || expiresDays > 90) fail("Use a 12-128 character password and an expiry of 1-90 days.");
+        let password: string;
+        if (typeof eventDate === "string") {
+          if (suppliedPassword !== undefined || !isEventDate(eventDate)) {
+            fail("Use a real event date in YYYY-MM-DD format as the password.");
+          }
+          password = eventDate;
+        } else {
+          if (typeof suppliedPassword !== "string" || suppliedPassword.length < 12 || suppliedPassword.length > 128) {
+            fail("Use a 12-128 character password.");
+          }
+          password = suppliedPassword;
+        }
+        if (typeof expiresDays !== "number" || !Number.isInteger(expiresDays) ||
+            expiresDays < 1 || expiresDays > 90) fail("Gallery expiry must be 1-90 days.");
         const shareToken = token();
         const salt = token();
         const iterations = 310000;

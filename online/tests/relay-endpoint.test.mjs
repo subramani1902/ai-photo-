@@ -15,13 +15,16 @@ const pendingId = "30000000-0000-4000-8000-000000000002";
 const otherId = "30000000-0000-4000-8000-000000000003";
 const secret = "a".repeat(64);
 const tokenHash = Buffer.from(await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(secret))).toString("hex");
+const workerSecret = "c".repeat(64);
+const workerTokenHash = Buffer.from(await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(workerSecret))).toString("hex");
 const galleryId = "40000000-0000-4000-8000-000000000001";
 
-function fixture({ status = "processing", expired = false, active = true, galleryActive = true } = {}) {
+function fixture({ status = "processing", expired = false, active = true, galleryActive = true, secondaryUploaded = false } = {}) {
   const tables = {
     photo_finder_jobs: [{ id: jobId, event_id: eventId, status, guest_token_hash: tokenHash,
       expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3600000).toISOString(), error_message: null }],
-    photo_finder_events: [{ id: eventId, active, name: "Test event", current_folder: "Current folder" }],
+    photo_finder_events: [{ id: eventId, active, name: "Test event", current_folder: "Current folder",
+      worker_token_hash: workerTokenHash }],
     photo_finder_gallery_sessions: [{ id: "session", gallery_id: galleryId, token_hash: tokenHash,
       expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3600000).toISOString() }],
     photo_finder_gallery_links: [{ id: galleryId, event_id: eventId, active: galleryActive,
@@ -34,26 +37,32 @@ function fixture({ status = "processing", expired = false, active = true, galler
       variant: "thumbnail", status: "ready", object_path: "gallery/test/a.webp",
       expires_at: new Date(Date.now() + 3600000).toISOString() }],
     photo_finder_results: [
-      { id: readyId, job_id: jobId, filename: "ready.jpg", similarity: 0.8, face_count: 1, uploaded: true, object_path: "private/ready" },
-      { id: pendingId, job_id: jobId, filename: "pending.jpg", similarity: 0.9, face_count: 4, uploaded: false, object_path: "private/pending" },
-      { id: otherId, job_id: "different-job", filename: "other.jpg", similarity: 0.99, face_count: 1, uploaded: true, object_path: "private/other" },
+      { id: readyId, job_id: jobId, photo_id: 11, filename: "ready.jpg", similarity: 0.8, face_count: 1, uploaded: true, object_path: "private/ready" },
+      { id: pendingId, job_id: jobId, photo_id: 12, filename: "pending.jpg", similarity: 0.9, face_count: 4, uploaded: secondaryUploaded, object_path: "private/pending" },
+      { id: otherId, job_id: "different-job", photo_id: 13, filename: "other.jpg", similarity: 0.99, face_count: 1, uploaded: true, object_path: "private/other" },
     ],
   };
   const downloads = [], removals = [];
   const db = {
     from(table) {
-      let rows = [...tables[table]], columns, options, single = false, values, maximum;
+      let rows = [...tables[table]], columns, options, single = false, values, maximum, inserting = false;
       const query = {
         select(value, config) { columns = value.split(","); options = config; return query; },
+        insert(value) { values = value; inserting = true; return query; },
         update(value) { values = value; return query; },
         eq(key, value) { rows = rows.filter(row => row[key] === value); return query; },
+        in(key, value) { rows = rows.filter(row => value.includes(row[key])); return query; },
         gt(key, value) { rows = rows.filter(row => row[key] > value); return query; },
         order(key, { ascending = true } = {}) { rows.sort((a, b) => (a[key] - b[key]) * (ascending ? 1 : -1)); return query; },
         limit(value) { maximum = value; return query; },
         maybeSingle() { single = true; return query; },
+        single() { single = true; return query; },
         then(resolve, reject) {
           if (maximum !== undefined) rows = rows.slice(0, maximum);
-          if (values) {
+          if (inserting) {
+            rows = [{ ...values, id: galleryId }];
+            tables[table].push(rows[0]);
+          } else if (values) {
             for (const row of rows) Object.assign(row, values);
           }
           const data = columns ? rows.map(row => Object.fromEntries(columns.map(column => [column, row[column]]))) : null;
@@ -83,6 +92,14 @@ function fixture({ status = "processing", expired = false, active = true, galler
         headers: { "X-Gallery-Session": token },
       }));
     },
+    workerRequest(payload, token = workerSecret) {
+      return handler(new Request("https://relay.example/functions/v1/relay/worker/gallery/create", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }));
+    },
+    galleryLinks: tables.photo_finder_gallery_links,
     fileRequest(token = secret) {
       return handler(new Request("https://relay.example/functions/v1/relay/guest/gallery/jobs/50000000-0000-4000-8000-000000000001/file", {
         headers: { "X-Gallery-Session": token },
@@ -104,8 +121,18 @@ test("processing jobs expose only ready metadata, with the full matched count", 
   assert.equal(body.status, "processing");
   assert.equal(body.photos_detected, 2);
   assert.equal(body.photos_ready, 1);
-  assert.deepEqual(body.photos, [{ id: readyId, filename: "ready.jpg", similarity: 0.8, face_count: 1 }]);
+  assert.deepEqual(body.photos, [{ id: readyId, filename: "ready.jpg", similarity: 0.8,
+    face_count: 1, folder_name: "Wedding" }]);
   assert.equal(JSON.stringify(body).includes("object_path"), false);
+});
+
+test("AI search labels matches with their separate source folders", async () => {
+  const body = await (await fixture({ secondaryUploaded: true }).request()).json();
+  assert.deepEqual(body.photos.map(photo => [photo.filename, photo.folder_name]), [
+    ["pending.jpg", "Reception"],
+    ["ready.jpg", "Wedding"],
+  ]);
+  assert.equal("photo_id" in body.photos[0], false);
 });
 
 test("ready photos can be viewed during processing using their job token", async () => {
@@ -173,6 +200,25 @@ test("gallery file delivery is atomically consumed to avoid concurrent 409 respo
   assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
   assert.deepEqual(api.downloads, ["gallery/test/a.webp"]);
   assert.deepEqual(api.removals, ["gallery/test/a.webp"]);
+});
+
+test("gallery creation accepts a valid event date as the password", async () => {
+  const api = fixture();
+  const response = await api.workerRequest({ event_date: "2026-11-18", expires_days: 30 });
+  assert.equal(response.status, 200);
+  assert.equal(api.galleryLinks.length, 2);
+  assert.notEqual(api.galleryLinks[1].password_hash, "2026-11-18");
+});
+
+test("gallery creation rejects invalid event dates and mixed password inputs", async () => {
+  for (const payload of [
+    { event_date: "2026-02-30", expires_days: 30 },
+    { event_date: "2026-11-18", password: "a-strong-password", expires_days: 30 },
+  ]) {
+    const api = fixture();
+    assert.equal((await api.workerRequest(payload)).status, 400);
+    assert.equal(api.galleryLinks.length, 1);
+  }
 });
 
 test("full-gallery metadata and CSV context require a live private session", async () => {
