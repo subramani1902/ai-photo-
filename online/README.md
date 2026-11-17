@@ -6,6 +6,20 @@ event index, and matched photos are transferred to private temporary storage.
 The relay Edge Function and its database objects must be deployed to the same
 Supabase project configured in `main.js` before guest searches can work.
 
+Matched photos appear progressively as the laptop uploads them. The guest job
+token is required for every status and image request, including during processing.
+Pending files are never returned. The browser fetches at most four images at a
+time and retries transient GET failures without resubmitting the selfie. Candid
+and Group filtering, individual downloads and selected ZIP downloads work as
+photos arrive; Download all becomes available after delivery completes.
+
+The relay worker defaults to two delivery slots so a large transfer does not
+block the next selfie search. Each slot has its own HTTP session; the existing
+InsightFace/FAISS call is protected by one shared lock. Use `--search-workers 1`
+when starting the worker to restore one delivery slot. An existing running
+worker must be restarted to pick up this change; let its current job complete
+before restarting. The camera importer does not need restarting.
+
 ## Provision the Supabase relay database
 
 After rotating any database password previously shared in chat, open the new

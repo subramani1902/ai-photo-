@@ -12,7 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -92,7 +92,7 @@ def prepare_photo_for_showcase(source_path, output_path):
 
 
 class RelayWorker:
-    def __init__(self, relay_url, worker_secret, event_id, *, session=None, engine=None):
+    def __init__(self, relay_url, worker_secret, event_id, *, session=None, engine=None, matching_lock=None):
         parsed = urlparse(relay_url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Relay URL must be a trusted HTTPS URL.")
@@ -103,6 +103,7 @@ class RelayWorker:
         self.session = session or requests.Session()
         self.session.headers.update({"Authorization": f"Bearer {worker_secret}"})
         self.engine = engine
+        self.matching_lock = matching_lock or Lock()
 
     def sync_showcase(self):
         from app.database.db import SessionLocal
@@ -393,7 +394,10 @@ class RelayWorker:
                     raise ValueError("Selfie is empty.")
                 if self.engine is None:
                     self.engine = FaceEngine()
-                matches = find_event_matches(self.event_id, selfie, engine=self.engine)
+                # Serialize the existing InsightFace/FAISS call when another
+                # job is transferring photos. Neither algorithm is changed.
+                with self.matching_lock:
+                    matches = find_event_matches(self.event_id, selfie, engine=self.engine)
                 matches = [
                     match for match in matches
                     if match["photo_id"] not in already_uploaded
@@ -486,6 +490,23 @@ class RelayWorker:
         return True
 
 
+def process_search_queue(worker, stop, poll_seconds):
+    """One extra delivery slot, with its own HTTP session and the shared AI lock."""
+    try:
+        while not stop.is_set():
+            try:
+                if not worker.process_once():
+                    stop.wait(poll_seconds)
+            except (requests.RequestException, OSError, KeyError) as exc:
+                if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 401:
+                    LOG.error("Additional search slot credentials were rejected; stopping that slot")
+                    return
+                LOG.warning("Additional search slot interrupted (%s); retrying", type(exc).__name__)
+                stop.wait(poll_seconds)
+    finally:
+        worker.session.close()
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Process online photo requests on this laptop.")
@@ -498,6 +519,8 @@ def main():
     )
     parser.add_argument("--relay-url", required=True, help="Trusted HTTPS relay URL")
     parser.add_argument("--poll-seconds", type=float, default=3)
+    parser.add_argument("--search-workers", type=int, choices=(1, 2), default=2,
+                        help="Concurrent photo deliveries; face matching remains sequential (default: 2)")
     args = parser.parse_args()
     if args.poll_seconds <= 0:
         parser.error("--poll-seconds must be positive")
@@ -507,6 +530,8 @@ def main():
         parser.error("Set PHOTO_FINDER_WORKER_SECRET in the environment first.")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     worker = RelayWorker(args.relay_url, secret, args.event_id)
+    stop = Event()
+    extra_thread = None
     try:
         initialized = False
         next_showcase_sync = 0.0
@@ -517,6 +542,14 @@ def main():
                     worker.request("POST", "/worker/setup")
                     initialized = True
                     next_showcase_sync = 0
+                    if args.search_workers == 2 and extra_thread is None:
+                        extra = RelayWorker(args.relay_url, secret, args.event_id,
+                                            matching_lock=worker.matching_lock)
+                        extra_thread = Thread(target=process_search_queue,
+                                              args=(extra, stop, args.poll_seconds),
+                                              name="relay-search-slot-2", daemon=True)
+                        extra_thread.start()
+                        LOG.info("Two search delivery slots active; face matching remains sequential")
                 if time.monotonic() >= next_showcase_sync:
                     try:
                         worker.sync_showcase()
@@ -546,6 +579,10 @@ def main():
                 time.sleep(args.poll_seconds)
     except KeyboardInterrupt:
         LOG.info("Worker stopped")
+    finally:
+        stop.set()
+        if extra_thread is not None:
+            extra_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

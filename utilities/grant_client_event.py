@@ -2,6 +2,9 @@
 
 import argparse
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.firebase import get_firebase_app, get_firebase_auth
 from app.core.firebase_config import FirebaseConfigurationError, get_firebase_settings
@@ -23,6 +26,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.days <= 366:
         parser.error("Choose an expiry from 1 to 366 days.")
+    if not Path("event_photos.db").is_file():
+        parser.error("Run this command from the existing repository containing event_photos.db.")
     try:
         settings = get_firebase_settings()
         settings.require_enabled()
@@ -60,6 +65,8 @@ def main():
         print("Event permission updated. Other accounts and events are unchanged.")
     except (FirebaseConfigurationError, EventAccessUnavailable, ValueError) as error:
         parser.error(str(error))
+    except SQLAlchemyError:
+        parser.error("Unable to read the existing local event database.")
 
 
 if __name__ == "__main__":

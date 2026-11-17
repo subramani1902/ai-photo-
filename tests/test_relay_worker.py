@@ -1,13 +1,14 @@
 from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
-from threading import Event
+from threading import Event, Lock
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import requests
 
-from app.services.relay_worker import RelayWorker, main
+from app.services.relay_worker import RelayWorker, main, process_search_queue
 
 
 JOB_ID = "00000000-0000-4000-8000-000000000001"
@@ -238,6 +239,56 @@ class RelayWorkerTests(unittest.TestCase):
                 self.assertTrue(self.worker.process_gallery_once())
 
             self.assertEqual(uploaded, {"bytes": b"original photo bytes", "type": "image/jpeg"})
+
+    def test_a_large_transfer_does_not_block_a_second_search_and_matching_is_locked(self):
+        matching_lock = Lock()
+        first = RelayWorker("https://relay.example", "secret", 3, engine=object(), matching_lock=matching_lock)
+        second = RelayWorker("https://relay.example", "secret", 3, engine=object(), matching_lock=matching_lock)
+        uploading, release_upload = Event(), Event()
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "synthetic.jpg"
+            source.write_bytes(b"synthetic photo")
+
+            def match(*args, **kwargs):
+                self.assertTrue(matching_lock.locked(), "The AI engine must be protected across delivery slots")
+                return [{"photo_id": 12, "path": source, "filename": source.name,
+                         "similarity": 0.9, "face_count": 1}]
+
+            def first_request(method, path, **kwargs):
+                if path.endswith("/results"):
+                    uploading.set()
+                    self.assertTrue(release_upload.wait(3))
+                return self.respond(method, path, **kwargs)
+
+            with patch.object(first, "request", side_effect=first_request), \
+                    patch.object(second, "request", side_effect=self.respond), \
+                    patch("app.services.relay_worker.find_event_matches", side_effect=match), \
+                    ThreadPoolExecutor(max_workers=1) as executor:
+                delivery = executor.submit(first.process_once)
+                try:
+                    self.assertTrue(uploading.wait(3))
+                    self.assertTrue(second.process_once(), "Second search must complete while the first transfer is blocked")
+                    self.assertFalse(delivery.done())
+                finally:
+                    release_upload.set()
+                self.assertTrue(delivery.result(timeout=3))
+
+    def test_additional_delivery_slot_recovers_connection_failures_and_closes_its_session(self):
+        worker, stop = Mock(), Event()
+        calls = []
+
+        def process():
+            calls.append(True)
+            if len(calls) == 1:
+                raise requests.ConnectionError()
+            stop.set()
+            return True
+
+        worker.process_once.side_effect = process
+        with self.assertLogs("app.services.relay_worker", level="WARNING"):
+            process_search_queue(worker, stop, 0.001)
+        self.assertEqual(worker.process_once.call_count, 2)
+        worker.session.close.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -152,12 +152,12 @@ async function gallerySession(req: Request) {
     .maybeSingle());
   if (!gallery) fail("Gallery link expired", 403);
   const event = check(await db.from("photo_finder_events")
-    .select("id")
+    .select("id,name,current_folder")
     .eq("id", gallery.event_id)
     .eq("active", true)
     .maybeSingle());
   if (!event) fail("Gallery unavailable", 403);
-  return { session, gallery };
+  return { session, gallery, event };
 }
 
 async function galleryWorkerJob(eventId: string, id: string, lease: string) {
@@ -372,7 +372,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/guest/gallery/photos" && req.method === "GET") {
-      const { gallery } = await gallerySession(req);
+      const { gallery, event } = await gallerySession(req);
       const url = new URL(req.url);
       const limitText = url.searchParams.get("limit") || "60";
       const afterText = url.searchParams.get("after") || "0";
@@ -387,8 +387,16 @@ Deno.serve(async (req) => {
         .limit(limit);
       if (after > 0) query = query.gt("photo_id", after);
       const photos = check(await query);
+      const total = await db.from("photo_finder_gallery_photos")
+        .select("photo_id", { count: "exact", head: true })
+        .eq("event_id", gallery.event_id);
+      check(total);
       const rows = photos || [];
       return json({
+        gallery_id: gallery.id,
+        event_id: gallery.event_id,
+        event_name: event.current_folder || event.name,
+        photo_count: total.count || 0,
         photos: rows.map((photo) => ({ id: Number(photo.photo_id), filename: photo.filename })),
         next_cursor: rows.length === limit ? String(rows[rows.length - 1].photo_id) : null,
       });

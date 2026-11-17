@@ -1,0 +1,12 @@
+.git
+venv
+.venv
+.phase2-deps
+__pycache__
+*.pyc
+*.log
+.env
+.env.*
+storage/
+Aathif-Sahana/
+private_embeddings_backup/
