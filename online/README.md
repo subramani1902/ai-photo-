@@ -61,13 +61,12 @@ Import that folder into its local event ID, then start its worker:
 .\venv\Scripts\python.exe -m app.services.relay_worker --event-id 4 --secrets-file .env.wedding --relay-url https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay
 ```
 
-Anyone can open `https://ai-photo-k5fu.vercel.app` to see the current watched
-folder and submit a selfie search. As imported photos are indexed, the worker
-refreshes that folder's three most recent previews automatically. QR links
-remain supported as an optional way to open one specific event.
-The website shows those previews on the home page and while search results load
-progressively. Public previews and selfie matches use only photos with at least
-one detected face; the importer keeps all original photos locally.
+Anyone can open `https://sm-photo-studio.vercel.app` and submit a selfie search
+against the current watched folder. QR links remain available for specific
+events. After finding the matches, the worker publishes their metadata before
+uploading any image bytes. The UI can therefore show the full Photos Matched
+count immediately, while delivery continues in the background. The importer
+keeps the original photos locally.
 Search results can be filtered into Candid (one detected face) and Group (two
 or more detected faces). Photos without a detected face are not candidates for
 selfie matching.
@@ -129,6 +128,22 @@ npx supabase functions deploy relay
 ```
 
 ## Start the laptop services
+
+Start missing services and check the current event with one command:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Event-AI-Photo-Finder\start-all.ps1"
+```
+
+The launcher reuses running processes and writes new service logs under the
+Windows temporary folder. Individual service commands follow below.
+
+On this laptop, the stored copies for local events `Aathif-Sahana` (event 4)
+and `wedding_001` are under `C:\Users\subra\EventAIPhotoFinderData\events`.
+Their original paths under `storage/events` are junctions, so existing database
+paths continue to work. The active event 3 and watched photo folder remain on D:.
+The importer pauses when its storage drive has less than 256 MB free and retries
+locked source files without blocking the rest of their batch.
 
 From the repository root, run the camera importer in one PowerShell terminal.
 It watches `Aathif-Sahana`, imports stable photos into local event ID 3 (`Candid

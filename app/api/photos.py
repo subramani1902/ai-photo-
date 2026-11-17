@@ -1,6 +1,7 @@
 
 import hashlib
 import json
+import logging
 import uuid
 
 from functools import lru_cache
@@ -44,6 +45,7 @@ router = APIRouter(
     prefix="/api/events",
     tags=["Photo Management"]
 )
+LOG = logging.getLogger(__name__)
 
 
 # --------------------------------------------------
@@ -625,6 +627,8 @@ async def upload_event_photos(
 
             except Exception:
 
+                LOG.exception("Photo processing failed for event %s: %s", event_id, original_filename)
+
                 db.rollback()
 
                 # Remove original image if processing failed
@@ -701,6 +705,8 @@ async def upload_event_photos(
                 )
 
             except Exception:
+
+                LOG.exception("Index rebuild failed for event %s", event_id)
 
                 index_rebuild_message = (
                     "Index rebuild failed. "

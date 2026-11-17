@@ -286,6 +286,22 @@ class RelayWorker:
                 ]
                 check_lease()
                 LOG.info("Matched %d new photos in %.1fs", len(matches), time.monotonic() - started)
+                # Publish every match before transferring image bytes, so the
+                # guest sees the full count while the uploads are in progress.
+                try:
+                    self.request(
+                        "POST", f"/worker/jobs/{job_id}/matches",
+                        headers=headers, retry_safe=True,
+                        json={"photos": [
+                            {key: match[key] for key in ("photo_id", "filename", "similarity", "face_count")}
+                            for match in matches
+                        ]},
+                    )
+                except requests.HTTPError as exc:
+                    if exc.response is None or exc.response.status_code != 404:
+                        raise
+                    LOG.warning("Relay does not support live match counts yet; continuing photo delivery")
+                check_lease()
 
                 def upload_match(match):
                     check_lease()
@@ -395,6 +411,9 @@ def main():
                 if not worker.process_once():
                     time.sleep(args.poll_seconds)
             except (requests.RequestException, OSError, KeyError) as exc:
+                if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 401:
+                    LOG.error("Worker credentials were rejected. Check %s before restarting.", args.secrets_file)
+                    return 1
                 LOG.warning("Relay request failed (%s); retrying", type(exc).__name__)
                 time.sleep(args.poll_seconds)
     except KeyboardInterrupt:
@@ -402,4 +421,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

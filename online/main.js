@@ -429,7 +429,11 @@ search.addEventListener("click", async () => {
       if (Number.isSafeInteger(status.photos_detected) && status.photos_detected >= 0) {
         updateLoadingPhotoCounts(status.photos_detected, fetchedPhotoCount, status.photos_detected);
       }
-      showMessage(status.status === "processing" ? "Matching your face with event photos…" : "Waiting for the event laptop…");
+      showMessage(status.status === "processing"
+        ? (status.photos_detected > 0
+          ? `Preparing your ${status.photos_detected} matched photos...`
+          : "Matching your face with event photos...")
+        : "Waiting for the event laptop...");
     }
     galleryLoadGeneration += 1;
     photoFetchController?.abort();

@@ -3,6 +3,16 @@
 .env.*
 !.env.example
 *.env.txt
+.secrets/
+*-firebase-adminsdk-*.json
+*-service-account.json
+.phase2-deps/
+node_modules/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+.firebase/
 
 # Python
 __pycache__/
@@ -20,6 +30,9 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 
 # User uploads, generated media, embeddings, and search indexes
 storage/

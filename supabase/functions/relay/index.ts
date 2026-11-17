@@ -357,7 +357,7 @@ Deno.serve(async (req) => {
         }
         return json({ job: { id: claimed.id, lease, uploaded_photo_ids: uploadedIds } });
       }
-      const match = path.match(/^\/worker\/jobs\/([0-9a-f-]+)\/(selfie|results|complete|fail|heartbeat|release)$/i);
+      const match = path.match(/^\/worker\/jobs\/([0-9a-f-]+)\/(selfie|matches|results|complete|fail|heartbeat|release)$/i);
       if (!match) fail("Not found", 404);
       if (req.method === "POST" && ["complete", "fail"].includes(match![2])) {
         const lease = req.headers.get("x-job-lease") || "";
@@ -367,6 +367,32 @@ Deno.serve(async (req) => {
         if (already) return json({ ok: true });
       }
       const job = await workerJob(event.id, match![1], req.headers.get("x-job-lease") || "");
+      if (match![2] === "matches" && req.method === "POST") {
+        const payload = await req.json() as { photos?: Array<{ photo_id: number; filename: string; similarity: number; face_count: number }> } | null;
+        const photos = payload?.photos ?? fail("Invalid matched photo list");
+        if (!Array.isArray(photos) || photos.length > 10_000 || photos.some((photo) =>
+          !photo || !Number.isSafeInteger(photo.photo_id) || photo.photo_id <= 0 ||
+          typeof photo.filename !== "string" || photo.filename.length < 1 || photo.filename.length > 255 ||
+          !Number.isFinite(photo.similarity) || photo.similarity < 0.45 || photo.similarity > 1.001 ||
+          !Number.isSafeInteger(photo.face_count) || photo.face_count < 1
+        ) || new Set(photos.map((photo) => photo.photo_id)).size !== photos.length) {
+          fail("Invalid matched photo list");
+        }
+        await workerJob(event.id, job.id, job.lease_id);
+        if (photos.length) {
+          // Retrying this manifest must preserve already-uploaded photos.
+          check(await db.from("photo_finder_results").upsert(photos.map((photo) => ({
+            job_id: job.id,
+            photo_id: photo.photo_id,
+            filename: photo.filename,
+            similarity: photo.similarity,
+            face_count: photo.face_count,
+            object_path: `results/${job.id}/${photo.photo_id}`,
+            uploaded: false,
+          })), { onConflict: "job_id,photo_id", ignoreDuplicates: true }));
+        }
+        return json({ ok: true });
+      }
       if (match![2] === "heartbeat" && req.method === "POST") {
         const updated = check(await db.from("photo_finder_jobs").update({ lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }).eq("id", job.id).eq("status", "processing").eq("lease_id", job.lease_id).select("id").maybeSingle());
         if (!updated) fail("Request lease expired", 409);

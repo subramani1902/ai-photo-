@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import logging
+import shutil
 import time
 from contextlib import ExitStack
 from pathlib import Path
@@ -24,6 +25,20 @@ from watch_camera_folder import (
 LOG = logging.getLogger(__name__)
 MAX_FILE_SIZE = 100 * 1024 * 1024
 MAX_FILES_PER_BATCH = 20
+MIN_FREE_DISK_BYTES = 256 * 1024 * 1024
+
+
+def open_import_batch(batch, stack):
+    uploads, readable = [], []
+    for path, signature in batch:
+        try:
+            file = stack.enter_context(path.open("rb"))
+        except OSError as exc:
+            LOG.warning("Cannot read %s (%s); retrying later", path.name, type(exc).__name__)
+            continue
+        uploads.append(UploadFile(filename=path.name, file=file))
+        readable.append((path, signature))
+    return uploads, readable
 
 
 async def run(folder, event_id):
@@ -38,6 +53,12 @@ async def run(folder, event_id):
     observed, processed, blocked = {}, {}, {}
     LOG.info("Watching %s for event %s", folder, event_id)
     while True:
+        free_bytes = shutil.disk_usage(Path.cwd()).free
+        if free_bytes < MIN_FREE_DISK_BYTES:
+            LOG.error("Storage drive is nearly full (%d MB free); pausing imports for 30 seconds",
+                      free_bytes // (1024 * 1024))
+            await asyncio.sleep(30)
+            continue
         try:
             present_paths = source_paths_in(folder)
             ready = scan_ready(folder, observed, processed, time.monotonic())
@@ -60,30 +81,27 @@ async def run(folder, event_id):
                 with SessionLocal() as db, ExitStack() as stack:
                     event = db.query(Event).filter_by(id=event_id).one()
                     owner = db.query(User).filter_by(id=event.owner_id, is_active=True).one()
-                    uploads = [
-                        UploadFile(
-                            filename=path.name,
-                            file=stack.enter_context(path.open("rb"))
-                        )
-                        for path, _ in batch
-                    ]
+                    uploads, readable_batch = open_import_batch(batch, stack)
+                    if not uploads:
+                        continue
                     result = await upload_event_photos(event_id,
                         files=uploads,
                         source_paths=[
                             path.relative_to(folder).as_posix()
-                            for path, _ in batch
+                            for path, _ in readable_batch
                         ],
                         db=db, current_admin=owner)
                 items = result["results"]
-                if len(items) != len(batch):
+                if len(items) != len(readable_batch):
                     raise ValueError("Unexpected photo import result count.")
-                for (path, signature), item in zip(batch, items):
+                for (path, signature), item in zip(readable_batch, items):
                     if item["status"] in ("success", "skipped"):
                         processed[path] = signature
                         blocked.pop(path, None)
                         LOG.info("%s: %s", item["status"], path.name)
                     else:
-                        LOG.warning("Import failed: %s; retrying", path.name)
+                        LOG.warning("Import failed: %s (%s); retrying", path.name,
+                                    item.get("message", "Unknown error"))
                 LOG.info("Index: %s", result["index_status"])
             except Exception:
                 LOG.exception("Import batch failed; retrying from %s", batch[0][0].name)
