@@ -19,6 +19,7 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
 
   function close() {
     resetPhotos();
+    busy = false;
     event = undefined;
     section.hidden = true;
     onClose?.();
@@ -36,7 +37,7 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
       let text = response.status === 403 ? "This event has not been shared with your account, or access has expired." : "The gallery is temporarily unavailable. Please try again.";
       if (response.status === 413) text = "Choose fewer photos. ZIP downloads are limited to 512 MB.";
       if (response.status === 429) text = "Please wait a moment before trying again.";
-      if (response.status === 403 && event) { close(); }
+      if ([401, 403].includes(response.status) && event) { close(); }
       throw new Error(text);
     }
     return response;
@@ -121,7 +122,9 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
         if (version !== generation) return;
         await Promise.all(page.photos.slice(i, i + 4).map(photo => render(photo, version)));
       }
-    } finally { busy = false; more.disabled = false; updateSelection(); }
+    } finally {
+      if (version === generation) { busy = false; more.disabled = false; updateSelection(); }
+    }
   }
 
   async function open(eventId) {
@@ -136,7 +139,10 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
     event = details; category = "all";
     $("#client-event-name").textContent = details.event_name;
     $("#client-event-summary").textContent = "Event " + details.event_id + " · Available until " + new Date(details.expires_at).toLocaleDateString();
-    document.querySelectorAll("[data-client-category]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.clientCategory === "all")));
+    document.querySelectorAll("[data-client-category]").forEach(button => {
+      const active = button.dataset.clientCategory === "all";
+      button.setAttribute("aria-pressed", String(active)); button.classList.toggle("active", active);
+    });
     section.hidden = false;
     try { await loadPhotos(); }
     catch (error) { close(); throw error; }

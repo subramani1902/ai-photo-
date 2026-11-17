@@ -1,4 +1,5 @@
 import { createPhotoArchive } from "./photo-archive.mjs";
+import { followRelaySearch, requestRelay } from "./relay-search.mjs";
 
 const RELAY = "https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay";
 const MAX_SELFIE_BYTES = 10 * 1024 * 1024;
@@ -13,6 +14,8 @@ let selectedSelfie = null, cameraStream = null, cameraPreviewUrl = null;
 const selectedPhotoIndexes = new Set();
 let downloadedCount = 0;
 let galleryPhotoCount = 0, settledPhotoCount = 0, fetchedPhotoCount = 0;
+let gallerySearchComplete = false;
+let galleryDeliveryStopped = false;
 let galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
 let activeCategory = "all";
 let galleryLoadGeneration = 0, photoFetchController = null;
@@ -225,17 +228,7 @@ document.querySelectorAll(".category-filter").forEach(button => {
 });
 
 async function request(path, options = {}) {
-  let response;
-  try {
-    response = await fetch(RELAY + path, options);
-  } catch {
-    throw new Error("The photo search service could not be reached. Check your internet connection and try again.");
-  }
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail || "Unable to complete your request. Please try again.");
-  }
-  return response;
+  return requestRelay(RELAY + path, options);
 }
 
 async function loadEvents() {
@@ -293,7 +286,7 @@ $("#download-all").addEventListener("click", async event => {
 function updateSelectionControls() {
   const readyIndexes = downloadablePhotos.flatMap((photo, index) => photo ? [index] : []);
   const selectedCount = readyIndexes.filter(index => selectedPhotoIndexes.has(index)).length;
-  $("#download-all").disabled = readyIndexes.length === 0 || settledPhotoCount < galleryPhotoCount;
+  $("#download-all").disabled = !gallerySearchComplete || readyIndexes.length === 0 || settledPhotoCount < galleryPhotoCount;
   const selectAll = $("#select-all");
   selectAll.disabled = readyIndexes.length === 0;
   selectAll.textContent = readyIndexes.length > 0 && selectedCount === readyIndexes.length
@@ -350,6 +343,7 @@ $("#preview-download").addEventListener("click", () => { if (selectedPhoto) down
 async function renderPhoto(photo, job, headers, index, generation, signal) {
   const card = document.createElement("article"); card.className = "result";
   card.dataset.category = Number(photo.face_count) > 1 ? "group" : "candid";
+  card.hidden = activeCategory !== "all" && card.dataset.category !== activeCategory;
   const open = document.createElement("button"); open.className = "photo-open"; open.disabled = true;
   open.setAttribute("aria-busy", "true");
   open.setAttribute("aria-label", "View " + photo.filename);
@@ -400,14 +394,37 @@ async function renderPhoto(photo, job, headers, index, generation, signal) {
   } finally {
     if (generation === galleryLoadGeneration) {
       settledPhotoCount += 1;
+      updateGalleryProgress();
       updateSelectionControls();
     }
   }
 }
 
+function updateGalleryProgress() {
+  updateLoadingPhotoCounts(galleryPhotoCount, fetchedPhotoCount, galleryPhotoCount);
+  $("#gallery-load-status").textContent = galleryDeliveryStopped
+    ? "Photo delivery stopped. You can download the photos already loaded, or try a new search."
+    : !gallerySearchComplete
+    ? `${fetchedPhotoCount} of ${galleryPhotoCount} photos ready. More photos are arriving…`
+    : settledPhotoCount < galleryPhotoCount
+      ? `Loading ${fetchedPhotoCount} of ${galleryPhotoCount} matching photos…`
+      : fetchedPhotoCount < galleryPhotoCount
+        ? `Fetched ${fetchedPhotoCount} of ${galleryPhotoCount} photos; ${galleryPhotoCount - fetchedPhotoCount} could not be loaded.`
+        : `All ${galleryPhotoCount} photos are ready.`;
+}
+
 search.addEventListener("click", async () => {
   if (!consent.checked || !selectedSelfie || busy) return;
   busy = true; updateButton();
+  const generation = ++galleryLoadGeneration;
+  photoFetchController?.abort();
+  const controller = new AbortController();
+  photoFetchController = controller;
+  const signal = controller.signal;
+  gallerySearchComplete = false;
+  galleryDeliveryStopped = false;
+  galleryPhotoCount = 0; settledPhotoCount = 0; fetchedPhotoCount = 0;
+  let galleryOpened = false;
   setLoadingAnimation(true);
   updateLoadingPhotoCounts("Scanning…", 0, 0);
   search.firstChild.textContent = "Finding your photos ";
@@ -417,84 +434,69 @@ search.addEventListener("click", async () => {
     const eventHeaders = eventToken
       ? { "X-Event-Token": eventToken }
       : { "X-Event-Id": selectedEventId };
-    const job = await (await request("/guest/submit", { method: "POST", headers: eventHeaders, body })).json();
+    const job = await (await request("/guest/submit", { method: "POST", headers: eventHeaders, body, signal })).json();
     const headers = { "X-Job-Token": job.job_token };
     showMessage("Finding your photos…");
-    let status;
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      status = await (await request(`/guest/jobs/${job.job_id}`, { headers })).json();
-      if (status.status === "completed") break;
-      if (status.status === "failed") throw new Error(status.message || "Could not process the selfie.");
-      if (Number.isSafeInteger(status.photos_detected) && status.photos_detected >= 0) {
-        updateLoadingPhotoCounts(status.photos_detected, fetchedPhotoCount, status.photos_detected);
-      }
-      showMessage(status.status === "processing"
-        ? (status.photos_detected > 0
-          ? `Preparing your ${status.photos_detected} matched photos...`
-          : "Matching your face with event photos...")
-        : "Waiting for the event laptop...");
+    await followRelaySearch({
+      signal,
+      getStatus: async () => (await request(`/guest/jobs/${job.job_id}`, { headers, signal })).json(),
+      loadPhoto: (photo, index) => renderPhoto(photo, job, headers, index, generation, signal),
+      onStatus(status) {
+        const available = status.photos || [];
+        gallerySearchComplete = status.status === "completed";
+        galleryPhotoCount = gallerySearchComplete ? available.length
+          : Math.max(available.length, Number.isSafeInteger(status.photos_detected) ? status.photos_detected : 0);
+        updateLoadingPhotoCounts(galleryPhotoCount, fetchedPhotoCount, galleryPhotoCount);
+        if (!galleryOpened && (available.length || gallerySearchComplete)) {
+          galleryOpened = true;
+          formSection.hidden = true; results.hidden = false; photos.replaceChildren();
+          $("#gallery-action-bar").hidden = false;
+          document.body.classList.add("gallery-visible");
+          downloadablePhotos = []; selectedPhotoIndexes.clear(); downloadedCount = 0;
+          activeCategory = "all";
+          $("#download-status").textContent = "Downloaded 0 photos";
+          $("#download-all").textContent = "Download all (.zip) ↓";
+          setLoadingAnimation(false);
+          window.scrollTo({ top: 0, behavior: "auto" });
+        }
+        if (!galleryOpened) {
+          showMessage(status.status === "processing"
+            ? (galleryPhotoCount ? `Preparing your ${galleryPhotoCount} matched photos…` : "Matching your face with event photos…")
+            : "Waiting for the event laptop…");
+          return;
+        }
+        galleryCategoryCounts = {
+          all: available.length,
+          candid: available.filter(photo => Number(photo.face_count) === 1).length,
+          group: available.filter(photo => Number(photo.face_count) > 1).length,
+        };
+        document.querySelectorAll(".category-filter").forEach(button => {
+          button.querySelector("[data-category-count]").textContent = galleryCategoryCounts[button.dataset.category];
+        });
+        updateCategoryFilter(activeCategory);
+        $("#gallery-load-progress").hidden = galleryPhotoCount === 0;
+        $("#summary").textContent = galleryPhotoCount
+          ? gallerySearchComplete
+            ? `We found ${galleryPhotoCount} photos: ${galleryCategoryCounts.candid} candid · ${galleryCategoryCounts.group} group.`
+            : `We found ${galleryPhotoCount} photos. ${available.length} available so far; more are arriving.`
+          : "No photos found this time.";
+        message.textContent = "";
+        updateGalleryProgress();
+        updateSelectionControls();
+      },
+    });
+  } catch (error) {
+    if (generation !== galleryLoadGeneration) return;
+    galleryDeliveryStopped = true;
+    controller.abort();
+    message.textContent = error.message;
+    if (galleryOpened) updateGalleryProgress();
+  } finally {
+    if (generation === galleryLoadGeneration) {
+      photoFetchController = null;
+      busy = false; setLoadingAnimation(false); search.firstChild.textContent = "Find my photos "; updateButton();
     }
-    galleryLoadGeneration += 1;
-    photoFetchController?.abort();
-    photoFetchController = new AbortController();
-    const generation = galleryLoadGeneration;
-    const signal = photoFetchController.signal;
-    formSection.hidden = true; results.hidden = false; photos.replaceChildren();
-    $("#gallery-action-bar").hidden = false;
-    document.body.classList.add("gallery-visible");
-    downloadablePhotos = [];
-    selectedPhotoIndexes.clear();
-    downloadedCount = 0;
-    galleryPhotoCount = status.photos.length;
-    settledPhotoCount = 0;
-    fetchedPhotoCount = 0;
-    updateLoadingPhotoCounts(galleryPhotoCount, fetchedPhotoCount, galleryPhotoCount);
-    showMessage(galleryPhotoCount
-      ? `Found ${galleryPhotoCount} matching photos. Loading them now…`
-      : "No matching photos found.");
-    $("#gallery-load-progress").hidden = galleryPhotoCount === 0;
-    $("#gallery-load-status").textContent = galleryPhotoCount
-      ? `Loading ${galleryPhotoCount} matching photos…`
-      : "No matching photos found.";
-    galleryCategoryCounts = {
-      all: galleryPhotoCount,
-      candid: status.photos.filter(photo => Number(photo.face_count) === 1).length,
-      group: status.photos.filter(photo => Number(photo.face_count) > 1).length,
-    };
-    document.querySelectorAll(".category-filter").forEach(button => {
-      button.querySelector("[data-category-count]").textContent = galleryCategoryCounts[button.dataset.category];
-    });
-    updateCategoryFilter("all");
-    $("#download-status").textContent = "Downloaded 0 photos";
-    $("#download-all").disabled = true;
-    $("#download-all").textContent = "Download all (.zip) ↓";
-    updateSelectionControls();
-    const count = status.photos.length;
-    $("#summary").textContent = count
-      ? `We found ${count} photo${count === 1 ? "" : "s"}: ${galleryCategoryCounts.candid} candid · ${galleryCategoryCounts.group} group.`
-      : "No photos found this time.";
-    message.textContent = "";
-    const photoLoads = status.photos.map((photo, index) =>
-      renderPhoto(photo, job, headers, index, generation, signal)
-    );
-    void Promise.all(photoLoads).then(() => {
-      if (generation !== galleryLoadGeneration) return;
-      photoFetchController = null;
-      const failedCount = galleryPhotoCount - fetchedPhotoCount;
-      $("#gallery-load-status").textContent = failedCount
-        ? `Fetched ${fetchedPhotoCount} of ${galleryPhotoCount} photos; ${failedCount} could not be loaded.`
-        : `All ${galleryPhotoCount} photos are ready.`;
-    }).catch(error => {
-      if (generation !== galleryLoadGeneration) return;
-      photoFetchController = null;
-      console.error("Could not load matching photos:", error);
-      $("#gallery-load-status").textContent = "Some matching photos could not be loaded.";
-    });
-    updateSelectionControls();
-    window.scrollTo({ top: 0, behavior: "auto" });
-  } catch (error) { message.textContent = error.message; }
-  finally { busy = false; setLoadingAnimation(false); search.firstChild.textContent = "Find my photos "; updateButton(); }
+  }
 });
 
 $("#again").addEventListener("click", () => {
@@ -504,6 +506,9 @@ $("#again").addEventListener("click", () => {
   objectUrls.forEach(url => URL.revokeObjectURL(url)); objectUrls = [];
   downloadablePhotos = []; selectedPhotoIndexes.clear(); selectedPhoto = null; photos.replaceChildren();
   galleryPhotoCount = 0; settledPhotoCount = 0; fetchedPhotoCount = 0;
+  gallerySearchComplete = false;
+  galleryDeliveryStopped = false;
+  busy = false;
   galleryCategoryCounts = { all: 0, candid: 0, group: 0 };
   updateCategoryFilter("all");
   $("#download-all").disabled = true; $("#download-all").textContent = "Download all (.zip) ↓";

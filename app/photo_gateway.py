@@ -36,6 +36,15 @@ app.add_middleware(CORSMiddleware, allow_origins=allowed_origins(), allow_creden
                    allow_headers=["Authorization", "Content-Type"], expose_headers=["Content-Disposition"])
 
 
+@app.middleware("http")
+async def private_responses(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @app.get("/health")
 def health():
     return {"status": "healthy"}

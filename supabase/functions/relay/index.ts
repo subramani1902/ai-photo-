@@ -295,7 +295,7 @@ Deno.serve(async (req) => {
     if (guestMatch && req.method === "GET") {
       const job = await guestJob(guestMatch[1], req.headers.get("x-job-token") || "");
       if (guestMatch[2]) {
-        if (job.status !== "completed" || !uuid.test(guestMatch[2])) fail("Photo not available", 404);
+        if (!["processing", "completed"].includes(job.status) || !uuid.test(guestMatch[2])) fail("Photo not available", 404);
         const photo = check(await db.from("photo_finder_results").select("object_path,filename").eq("id", guestMatch[2]).eq("job_id", job.id).eq("uploaded", true).maybeSingle());
         if (!photo) fail("Photo not found", 404);
         const blob = check(await db.storage.from(bucket).download(photo!.object_path))
@@ -304,14 +304,15 @@ Deno.serve(async (req) => {
       }
       let photos: Array<{ id: string; filename: string; similarity: number; face_count: number }> = [];
       let photosDetected = 0;
-      if (job.status === "completed") {
+      if (job.status === "processing" || job.status === "completed") {
         photos = check(await db.from("photo_finder_results")
           .select("id,filename,similarity,face_count")
           .eq("job_id", job.id)
           .eq("uploaded", true)
           .order("similarity", { ascending: false })) || [];
         photosDetected = photos.length;
-      } else {
+      }
+      if (job.status !== "completed") {
         const progress = await db.from("photo_finder_results")
           .select("id", { count: "exact", head: true })
           .eq("job_id", job.id);
@@ -323,6 +324,7 @@ Deno.serve(async (req) => {
         message: job.error_message,
         photos,
         photos_detected: photosDetected,
+        photos_ready: photos.length,
       });
     }
 

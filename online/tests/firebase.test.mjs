@@ -116,6 +116,20 @@ function browserSdk() {
       events.push(["password", email, password]);
       auth.currentUser = { uid: "account-test-uid", email, emailVerified: true, refreshToken: "PRIVATE-TOKEN" };
     },
+    async createUserWithEmailAndPassword(_auth, email, password) {
+      events.push(["create-account", email, password]);
+      auth.currentUser = { uid: "new-client-uid", email, emailVerified: false,
+        getIdToken: async refresh => { events.push(["refresh-id-token", refresh]); return "offline-id-token"; } };
+    },
+    GoogleAuthProvider: class {
+      setCustomParameters(value) { this.parameters = value; }
+    },
+    async signInWithPopup(_auth, provider) {
+      events.push(["google-sign-in", provider.parameters]);
+      auth.currentUser = { uid: "google-client-uid", email: "client@example.test", emailVerified: true };
+    },
+    async sendEmailVerification(user) { events.push(["verify-email", user.uid]); },
+    async reload(user) { user.emailVerified = true; events.push(["reload-account", user.uid]); },
     async sendPasswordResetEmail(_auth, email) { events.push(["password-reset", email]); },
     async signOut() { auth.currentUser = null; },
   };
@@ -164,6 +178,33 @@ test("account helpers expose only identity and delegate password reset to Fireba
   assert.deepEqual(sdk.events.at(-1), ["password-reset", "owner@example.test"]);
   await client.signOut();
   assert.equal(await client.getCurrentUser(), null);
+});
+
+test("clients create their own account, verify email and sign in with Google without privileged claims", async () => {
+  const sdk = browserSdk();
+  const client = createFirebaseClient({ configuration: buildPublicConfiguration(publicEnv()), loadSdk: async () => sdk });
+  await assert.rejects(client.sendVerification(), /Sign in/);
+  await client.createAccount("client@example.test", "chosen-test-password");
+  assert.deepEqual(await client.getCurrentUser(), { uid: "new-client-uid", email: "client@example.test", emailVerified: false });
+  await client.sendVerification();
+  await client.refreshUser();
+  assert.equal((await client.getCurrentUser()).emailVerified, true);
+  assert.deepEqual(sdk.events.at(-1), ["refresh-id-token", true]);
+  await client.signOut();
+  await client.signInWithGoogle();
+  assert.deepEqual(sdk.events.at(-1), ["google-sign-in", { prompt: "select_account" }]);
+  const user = await client.getCurrentUser();
+  assert.equal(user.uid, "google-client-uid");
+  assert.equal("admin" in user, false);
+  assert.equal(sdk.events.some(event => event[0] === "sign-in"), false);
+});
+
+test("photo API configuration only accepts a clean HTTPS origin", () => {
+  const publicConfig = buildPublicConfiguration({ ...publicEnv(), FIREBASE_PHOTO_API_URL: "https://private-photo-api.example.test/" });
+  assert.equal(publicConfig.photoApiBaseUrl, "https://private-photo-api.example.test");
+  for (const url of ["http://private-photo-api.example.test", "https://user:secret@example.test", "https://example.test/private", "https://example.test/?token=secret"]) {
+    assert.throws(() => buildPublicConfiguration({ ...publicEnv(), FIREBASE_PHOTO_API_URL: url }));
+  }
 });
 
 test("configuration generator runs as a CLI on canonical Windows paths", () => {
