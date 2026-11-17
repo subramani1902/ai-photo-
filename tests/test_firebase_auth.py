@@ -22,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.auth import router as legacy_auth_router
 from app.api.firebase_auth import router as firebase_auth_router
+from app import main as backend_main
 from app.core import firebase as firebase_core
 from app.core.firebase_config import FirebaseConfigurationError, FirebaseSettings
 from app.core.firebase_tokens import (
@@ -46,6 +47,17 @@ def claims_for(uid="admin-test-uid", **overrides):
 
 
 class FirebaseConfigurationTests(unittest.TestCase):
+    def test_backend_initializes_firebase_only_when_enabled(self):
+        with patch.object(backend_main, "get_firebase_settings", return_value=FirebaseSettings()), \
+                patch.object(backend_main, "get_firebase_app") as initialize:
+            backend_main.initialize_firebase()
+        initialize.assert_not_called()
+
+        with patch.object(backend_main, "get_firebase_settings", return_value=FirebaseSettings(True, PROJECT)), \
+                patch.object(backend_main, "get_firebase_app") as initialize:
+            backend_main.initialize_firebase()
+        initialize.assert_called_once_with()
+
     def test_disabled_configuration_does_not_require_project_credentials_or_sdk(self):
         settings = FirebaseSettings.from_env({"FIREBASE_ENABLED": "false", "FIREBASE_PROJECT_ID": "invalid",
                                               "FIREBASE_CREDENTIALS_FILE": "missing.json"})

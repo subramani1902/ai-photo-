@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
+from app.core.firebase import get_firebase_app
+from app.core.firebase_config import get_firebase_settings
 from app.api.guest import router as guest_router
 from app.api.auth import router as auth_router
 from app.api.search import router as search_router
@@ -65,6 +67,12 @@ app.include_router(firebase_auth_router)
 @app.on_event("startup")
 def initialize_person_groups():
     init_person_groups()
+
+
+@app.on_event("startup")
+def initialize_firebase():
+    if get_firebase_settings().enabled:
+        get_firebase_app()
 
 
 # --------------------------------------------------

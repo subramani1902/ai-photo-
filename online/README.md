@@ -136,22 +136,36 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Event-AI-Photo-Finder\st
 ```
 
 The launcher reuses running processes and writes new service logs under the
-Windows temporary folder. Individual service commands follow below.
+Windows temporary folder. To keep the backend, importer, and relay monitored
+and start them automatically whenever this Windows user signs in, install the
+current-user scheduled task:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Event-AI-Photo-Finder\start-all.ps1" -InstallTask
+```
+
+The supervisor checks backend health every 15 seconds and relaunches missing
+services. The task runs only while this user is signed in; the G: photo folder
+and Firebase credential file must remain accessible. Remove it with
+`Unregister-ScheduledTask -TaskName "Event AI Photo Finder Services"`.
+Service logs are written under the Windows temporary folder. Individual
+service commands follow below.
 
 On this laptop, the stored copies for local events `Aathif-Sahana` (event 4)
 and `wedding_001` are under `C:\Users\subra\EventAIPhotoFinderData\events`.
 Their original paths under `storage/events` are junctions, so existing database
-paths continue to work. The active event 3 and watched photo folder remain on D:.
+paths continue to work. Event 3 (`Candid Test`) watches
+`G:\Aathif & sahana\aathif and sahana`.
 The importer pauses when its storage drive has less than 256 MB free and retries
 locked source files without blocking the rest of their batch.
 
 From the repository root, run the camera importer in one PowerShell terminal.
-It watches `Aathif-Sahana`, imports stable photos into local event ID 3 (`Candid
-Test`), rebuilds the event's face index, and keeps that event synchronized
-with the folder:
+It imports stable photos from the watched folder into local event ID 3
+(`Candid Test`), rebuilds the event's face index, and keeps that event
+synchronized with the folder:
 
 ```powershell
-.\venv\Scripts\python.exe -m app.services.camera_importer --folder .\Aathif-Sahana --event-id 3
+.\venv\Scripts\python.exe -m app.services.camera_importer --folder "G:\Aathif & sahana\aathif and sahana" --event-id 3
 ```
 
 In a second terminal, start the relay worker:
@@ -198,15 +212,15 @@ relay worker.
 From the repository root, preview the batch first, then start the copy:
 
 ```powershell
-.\venv\Scripts\python.exe utilities\copy_photos_to_watched_folder.py --source D:\PUBERTY2 --destination D:\Event-AI-Photo-Finder\Aathif-Sahana --dry-run
-.\venv\Scripts\python.exe utilities\copy_photos_to_watched_folder.py --source D:\PUBERTY2 --destination D:\Event-AI-Photo-Finder\Aathif-Sahana --interval 10
+.\venv\Scripts\python.exe utilities\copy_photos_to_watched_folder.py --source D:\PUBERTY2 --destination "G:\Aathif & sahana\aathif and sahana" --dry-run
+.\venv\Scripts\python.exe utilities\copy_photos_to_watched_folder.py --source D:\PUBERTY2 --destination "G:\Aathif & sahana\aathif and sahana" --interval 10
 ```
 
 In another PowerShell terminal, monitor importer progress and local face
 detection:
 
 ```powershell
-.\venv\Scripts\python.exe -m utilities.check_photo_ingest --folder D:\Event-AI-Photo-Finder\Aathif-Sahana --event-id 3 --interval 5
+.\venv\Scripts\python.exe -m utilities.check_photo_ingest --folder "G:\Aathif & sahana\aathif and sahana" --event-id 3 --interval 5
 ```
 
 `pending` should fall to zero as the importer indexes incoming photos.
@@ -215,7 +229,7 @@ detectable face is still counted as indexed.
 
 ## Prototype limits
 
-- This setup is paired to local event ID 3 (`Candid Test`) and the current Supabase event. Its intake folder is `Aathif-Sahana` at the repository root.
+- This setup is paired to local event ID 3 (`Candid Test`) and the current Supabase event. Its intake folder is `G:\Aathif & sahana\aathif and sahana`.
 - Jobs expire after 24 hours. The migration does not configure a scheduled
   cleanup task; set up and test the maintenance secret and scheduler in the new
   Supabase project before relying on automatic removal of stored files.
