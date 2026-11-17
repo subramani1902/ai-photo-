@@ -20,28 +20,67 @@
     <section class="intro account-intro" aria-labelledby="account-title">
       <div class="eyebrow"><span></span> YOUR PRIVATE ACCOUNT</div>
       <h1 id="account-title">Welcome <em>back.</em></h1>
-      <p class="intro-copy">Sign in with the email address registered to your account.</p>
+      <p class="intro-copy">Sign in or create your account, then enter your Event ID to open your photos.</p>
       <div class="upload-card">
+        <div id="account-modes" class="account-modes" role="group" aria-label="Choose account action">
+          <button id="mode-sign-in" type="button" aria-pressed="true" disabled>Sign in</button>
+          <button id="mode-register" type="button" aria-pressed="false" disabled>Create account</button>
+        </div>
         <form id="sign-in-form" aria-label="Sign in" aria-busy="true">
-          <div class="card-heading"><h2>Sign in</h2><span class="sparkle" aria-hidden="true">✦</span></div>
+          <div class="card-heading"><h2 id="form-title">Sign in</h2><span class="sparkle" aria-hidden="true">✦</span></div>
           <label class="account-field" for="account-email">Email address
             <input id="account-email" name="email" type="email" autocomplete="username" maxlength="254" required disabled>
           </label>
           <label class="account-field" for="account-password">Password
             <input id="account-password" name="password" type="password" autocomplete="current-password" maxlength="4096" required disabled>
           </label>
+          <label id="confirm-password-field" class="account-field" for="account-confirm-password" hidden>Confirm password
+            <input id="account-confirm-password" name="confirm-password" type="password" autocomplete="new-password" maxlength="4096" disabled>
+          </label>
+          <p id="registration-help" class="account-help" hidden>Use your email as your login ID. You’ll choose your own password and verify your email address.</p>
           <button id="sign-in" class="primary" type="submit" disabled>Sign in ↗</button>
           <button id="reset-password" class="text-button account-reset" type="button" disabled>Forgot your password?</button>
         </form>
+        <div id="google-option">
+          <div class="account-divider"><span>or</span></div>
+          <button id="google-sign-in" class="google-sign-in" type="button" disabled><span aria-hidden="true" class="google-mark">G</span>Continue with Google</button>
+        </div>
         <div id="signed-in" hidden>
           <div class="card-heading"><h2>You’re signed in.</h2><span class="sparkle" aria-hidden="true">✓</span></div>
           <p id="account-identity" class="card-copy"></p>
-          <p class="card-copy">Open the gallery link shared by your photographer to view your photos.</p>
+          <div id="email-verification" class="verification-notice" hidden>
+            <p>Verify your email address before opening your event photos.</p>
+            <button id="send-verification" class="text-button" type="button">Send verification email</button>
+            <button id="check-verification" class="text-button" type="button">I’ve verified my email</button>
+          </div>
+          <form id="event-form" aria-label="Open your event">
+            <label class="account-field" for="client-event-id">Event ID
+              <input id="client-event-id" name="event-id" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,9}" maxlength="10" autocomplete="off" placeholder="Event ID from your photographer" required>
+            </label>
+            <button id="open-event" class="primary" type="submit">Open my photos ↗</button>
+          </form>
+          <p class="account-help">Your photographer must share the event with your account.</p>
+          <details class="account-details"><summary>Your account ID</summary><code id="account-uid"></code></details>
           <button id="sign-out" class="primary" type="button">Sign out</button>
         </div>
         <p id="account-message" class="account-message" role="status" aria-live="polite">Preparing secure sign-in…</p>
       </div>
-      <p class="privacy account-privacy">Your session stays in this tab. Shared gallery permissions are managed by your photographer.</p>
+      <p class="privacy account-privacy">Your session stays in this tab. You can view only events shared with your account.</p>
+    </section>
+    <section id="client-gallery" class="client-gallery" hidden aria-label="Your event photos">
+      <div class="results-head"><div><div class="eyebrow"><span></span> YOUR PRIVATE EVENT</div><h1 id="client-event-name">Your <em>moments.</em></h1><p id="client-event-summary"></p></div><button id="close-event" class="text-button" type="button">Change event ↗</button></div>
+      <div class="client-gallery-toolbar">
+        <div class="category-filters" role="group" aria-label="Filter event photos">
+          <button class="category-filter active" type="button" data-client-category="all" aria-pressed="true">All</button>
+          <button class="category-filter" type="button" data-client-category="candid" aria-pressed="false">Candid</button>
+          <button class="category-filter" type="button" data-client-category="group" aria-pressed="false">Group</button>
+          <button class="category-filter" type="button" data-client-category="favourites" aria-pressed="false">Favourites</button>
+        </div>
+        <button id="download-event-selection" class="download-all" type="button" disabled>Download selected (.zip)</button>
+      </div>
+      <p id="client-gallery-message" class="account-message" role="status" aria-live="polite"></p>
+      <div id="client-photos" class="photos" data-view="large"></div>
+      <button id="client-load-more" class="primary client-load-more" type="button" hidden>Load more photos</button>
     </section>
   </main>
 </body>

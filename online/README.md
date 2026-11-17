@@ -29,7 +29,9 @@ Run the showcase migration
 [`20261110160000_create_private_event_showcases.sql`](../supabase/migrations/20261110160000_create_private_event_showcases.sql)
 as well. Apply
 [`20261114140000_follow_current_photo_folder.sql`](../supabase/migrations/20261114140000_follow_current_photo_folder.sql)
-and deploy the relay function. The laptop worker synchronizes up to three
+and
+[`20261118120000_add_password_protected_galleries.sql`](../supabase/migrations/20261118120000_add_password_protected_galleries.sql),
+then deploy the relay function. The laptop worker synchronizes up to three
 recent photos from the watched folder to the private bucket every minute. The
 public website shows only the folder most recently reported by a running
 worker, using the watched folder's name; the listing disappears if the worker
@@ -203,6 +205,38 @@ depends on the photo and available hardware.
 Keep every photo that belongs to the event inside its watched folder; photos
 uploaded outside that folder are removed when the initial full sync completes.
 Preview images refresh automatically through the relay worker.
+
+## Create a password-protected full-album link
+
+The full gallery reads photos on demand from the watched drive. It does not
+upload the entire album in advance: thumbnails are temporarily transferred as
+the client browses, and an original is transferred only when its download
+button is selected. Keep the studio computer, external drive, internet
+connection, and relay worker running while the client uses the gallery.
+
+Apply the gallery migration and deploy the relay function and Vercel website
+before creating a link. The worker must be running, and the importer must have
+finished syncing the entire folder. This command checks that every supported
+file in the watched folder is tracked locally and that the relay manifest is
+up to date; it refuses to create a partial album. It then prompts for a
+12-128 character password and creates a link that expires after 30 days:
+
+```powershell
+.\venv\Scripts\python.exe -m utilities.manage_photo_gallery --event-id 3 --secrets-file .env.relay
+```
+
+Send the link and password to the client separately. The client can browse
+compressed previews and download individual originals. Temporary relay copies
+expire after about an hour and are cleaned up by the running worker. To revoke
+a link before expiry, use its Gallery ID:
+
+```powershell
+.\venv\Scripts\python.exe -m utilities.manage_photo_gallery --event-id 3 --secrets-file .env.relay --revoke-id <gallery-id>
+```
+
+The website's `/gallery.html` page is included in the static Vercel deployment.
+Gallery passwords are stored as salted, iterated hashes; the worker secret and
+local drive paths are never sent to client browsers.
 
 ## Replay a photo folder into the watched folder
 

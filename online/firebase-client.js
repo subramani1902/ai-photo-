@@ -52,6 +52,27 @@ export function createFirebaseClient({ configuration, context = "client", loadSd
       const { auth, sdk } = await ready();
       await sdk.signInWithEmailAndPassword(auth, email, password);
     },
+    async createAccount(email, password) {
+      const { auth, sdk } = await ready();
+      await sdk.createUserWithEmailAndPassword(auth, email, password);
+    },
+    async signInWithGoogle() {
+      const { auth, sdk } = await ready();
+      const provider = new sdk.GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await sdk.signInWithPopup(auth, provider);
+    },
+    async sendVerification() {
+      const { auth, sdk } = await ready();
+      if (!auth.currentUser) throw new Error("Sign in before verifying your email address.");
+      await sdk.sendEmailVerification(auth.currentUser);
+    },
+    async refreshUser() {
+      const { auth, sdk } = await ready();
+      if (!auth.currentUser) throw new Error("Sign in before refreshing your account.");
+      await sdk.reload(auth.currentUser);
+      await auth.currentUser.getIdToken(true);
+    },
     async getCurrentUser() {
       const { auth } = await ready();
       if (typeof auth.authStateReady === "function") await auth.authStateReady();

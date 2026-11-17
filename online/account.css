@@ -10,4 +10,21 @@
 .account-privacy{line-height:1.7;margin-top:22px}
 #account-identity{overflow-wrap:anywhere}
 #sign-out{margin-top:24px}
+.account-modes{display:flex;gap:8px;margin-bottom:24px;border-bottom:1px solid var(--line);padding-bottom:14px}
+.account-modes button{padding:10px 16px;border:1px solid transparent;border-radius:10px;color:var(--muted);background:transparent}
+.account-modes button[aria-pressed=true]{background:#eaf2e8;border-color:#d9e6d7;color:var(--green);font-weight:600}
+.account-divider{display:flex;align-items:center;gap:14px;margin:24px 0;color:var(--muted);font-size:12px}
+.account-divider::before,.account-divider::after{content:"";height:1px;flex:1;background:var(--line)}
+.google-sign-in{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;min-height:48px;border:1px solid #d8ded5;border-radius:12px;background:white;color:var(--ink);font-weight:600}
+.google-sign-in:hover{background:#f7faf5}.google-mark{font:700 20px Arial,sans-serif;color:#4285f4}
+.account-help{font-size:12px;line-height:1.6;color:var(--muted);margin-top:14px}
+.verification-notice{padding:16px;background:#f9f4e7;border:1px solid #e8dec5;border-radius:12px;font-size:13px;line-height:1.6}
+.verification-notice button{display:inline-block;margin:12px 14px 0 0}
+#open-event{margin-top:20px}.account-details{margin-top:18px;font-size:12px;color:var(--muted)}
+.account-details code{display:block;padding:10px 0;overflow-wrap:anywhere;font-size:11px}
+.client-gallery{margin:50px 0 80px}.client-gallery-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:20px 0}
+.client-gallery-toolbar .category-filters{margin:0}.client-photo{padding-bottom:12px}.client-photo img{display:block;width:100%;height:240px;object-fit:cover;background:#eaf0e5}
+.client-photo-controls{display:flex;align-items:center;gap:12px;padding:12px}.client-photo-controls button{border:0;background:none;color:var(--green);font-size:13px}
+.client-photo-controls label{display:flex;align-items:center;gap:6px;font-size:12px;margin-left:auto}.client-photo-name{padding:0 12px;font-size:12px;overflow-wrap:anywhere;color:var(--muted)}
+.client-load-more{max-width:280px;margin:28px auto}.client-gallery .account-message{margin:16px 0}
 @media(max-width:600px){.account-intro{margin-top:36px}.topbar>.text-button{font-size:12px;max-width:130px;text-align:right}}

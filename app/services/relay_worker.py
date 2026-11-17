@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
 from urllib.parse import urlparse
+from uuid import UUID, uuid4
 
 import cv2
 import numpy as np
@@ -33,6 +34,9 @@ HEARTBEAT_INTERVAL_SECONDS = 30
 SHOWCASE_PHOTO_COUNT = 3
 SHOWCASE_MAX_DIMENSION = 640
 SHOWCASE_WEBP_QUALITY = 78
+MAX_GALLERY_ORIGINAL_BYTES = 50 * 1024 * 1024
+GALLERY_MANIFEST_BATCH_SIZE = 500
+GALLERY_CLEANUP_INTERVAL_SECONDS = 300
 
 
 def prepare_photo_for_transfer(source_path, output_path):
@@ -192,6 +196,107 @@ class RelayWorker:
             len(keep_ids),
             folder_name,
         )
+
+    def sync_gallery_manifest(self):
+        from app.database.db import SessionLocal
+        from app.database.models import Event, Photo
+
+        with SessionLocal() as db:
+            event = db.query(Event).filter_by(id=self.event_id).one_or_none()
+            if event is None:
+                raise ValueError(f"Local event {self.event_id} does not exist.")
+            if not event.event_name or Path(event.event_name).name != event.event_name:
+                raise ValueError("Invalid local event folder name.")
+            photos = (
+                db.query(Photo.id, Photo.filename)
+                .filter_by(event_id=self.event_id)
+                .order_by(Photo.id)
+                .all()
+            )
+        generation = str(uuid4())
+        rows = [
+            {"photo_id": photo_id, "filename": filename}
+            for photo_id, filename in photos
+        ]
+        if not rows:
+            self.request("POST", "/worker/gallery/manifest", json={
+                "event_name": event.event_name,
+                "generation": generation,
+                "photos": [],
+                "complete": True,
+            })
+        else:
+            for start in range(0, len(rows), GALLERY_MANIFEST_BATCH_SIZE):
+                batch = rows[start:start + GALLERY_MANIFEST_BATCH_SIZE]
+                self.request("POST", "/worker/gallery/manifest", json={
+                    "event_name": event.event_name,
+                    "generation": generation,
+                    "photos": batch,
+                    "complete": start + len(batch) == len(rows),
+                })
+        LOG.info("Synchronized %d gallery photos", len(rows))
+
+    def process_gallery_once(self):
+        job = self.request("POST", "/worker/gallery/claim").json().get("job")
+        if not job:
+            return False
+        job_id = str(UUID(str(job["id"])))
+        lease = str(UUID(str(job["lease"])))
+        photo_id = job.get("photo_id")
+        variant = job.get("variant")
+        headers = {"X-Gallery-Job-Lease": lease}
+        try:
+            if not isinstance(photo_id, int) or photo_id < 1 or variant not in {"thumbnail", "original"}:
+                raise ValueError("Invalid gallery request.")
+            from app.database.db import SessionLocal
+            from app.database.models import Event, Photo
+            from app.services.photo_sources import resolve_photo_file
+
+            with SessionLocal() as db:
+                event = db.query(Event).filter_by(id=self.event_id).one_or_none()
+                photo = db.query(Photo).filter_by(id=photo_id, event_id=self.event_id).one_or_none()
+                if event is None or photo is None:
+                    raise FileNotFoundError("Gallery photo is unavailable.")
+                source_path = resolve_photo_file(db, event, photo)
+            source_path = Path(source_path).resolve(strict=True)
+            with tempfile.TemporaryDirectory(prefix="photo-finder-gallery-") as directory:
+                transfer_path = source_path
+                if variant == "thumbnail":
+                    transfer_path = prepare_photo_for_showcase(
+                        source_path,
+                        Path(directory) / f"{photo_id}.webp",
+                    )
+                    content_type = "image/webp"
+                else:
+                    if source_path.stat().st_size > MAX_GALLERY_ORIGINAL_BYTES:
+                        raise ValueError("Original photo exceeds the relay size limit.")
+                    content_type = mimetypes.guess_type(source_path.name)[0]
+                    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                        raise ValueError("Unsupported gallery photo format.")
+                with transfer_path.open("rb") as photo_file:
+                    self.request(
+                        "POST",
+                        f"/worker/gallery/jobs/{job_id}/complete",
+                        headers=headers,
+                        retry_safe=True,
+                        files={"photo": (transfer_path.name, photo_file, content_type)},
+                    )
+            LOG.info("Delivered gallery %s photo %s", variant, photo_id)
+        except (OSError, ValueError) as exc:
+            LOG.warning("Gallery photo %s unavailable (%s)", photo_id, type(exc).__name__)
+            self.request(
+                "POST",
+                f"/worker/gallery/jobs/{job_id}/fail",
+                headers=headers,
+                retry_safe=True,
+            )
+        return True
+
+    def cleanup_gallery(self):
+        response = self.request("POST", "/worker/gallery/cleanup")
+        cleaned = response.json().get("cleaned", 0)
+        if cleaned:
+            LOG.info("Cleaned %d expired gallery photo transfers", cleaned)
 
     def request(self, method, path, *, retry_safe=False, session=None, timeout=(10, 120), **kwargs):
         # Multipart uploads consume their file objects; rewind them on each retry.
@@ -405,6 +510,7 @@ def main():
     try:
         initialized = False
         next_showcase_sync = 0.0
+        next_gallery_cleanup = 0.0
         while True:
             try:
                 if not initialized:
@@ -416,8 +522,21 @@ def main():
                         worker.sync_showcase()
                     except (requests.RequestException, OSError, ValueError, KeyError) as exc:
                         LOG.warning("Showcase sync failed (%s); retrying in one minute", type(exc).__name__)
+                    try:
+                        worker.sync_gallery_manifest()
+                    except (requests.RequestException, OSError, ValueError, KeyError) as exc:
+                        LOG.warning("Gallery manifest sync failed (%s); retrying in one minute", type(exc).__name__)
                     next_showcase_sync = time.monotonic() + 60
-                if not worker.process_once():
+                if time.monotonic() >= next_gallery_cleanup:
+                    try:
+                        worker.cleanup_gallery()
+                    except (requests.RequestException, ValueError, KeyError) as exc:
+                        LOG.warning("Gallery cleanup failed (%s); retrying in five minutes", type(exc).__name__)
+                    next_gallery_cleanup = time.monotonic() + GALLERY_CLEANUP_INTERVAL_SECONDS
+                processed = worker.process_once()
+                if not processed:
+                    processed = worker.process_gallery_once()
+                if not processed:
                     time.sleep(args.poll_seconds)
             except (requests.RequestException, OSError, KeyError) as exc:
                 if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 401:

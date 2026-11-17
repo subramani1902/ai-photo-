@@ -1,7 +1,17 @@
 {
   "auth": {
     "providers": {
-      "emailPassword": true
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "SM Photography",
+        "supportEmail": "subramanim11a@gmail.com",
+        "authorizedRedirectUris": [
+          "https://smphotography-f8c83.firebaseapp.com/__/auth/handler",
+          "https://sm-photo-studio.vercel.app",
+          "https://ai-photo-k5fu.vercel.app",
+          "http://localhost"
+        ]
+      }
     }
   },
   "firestore": {

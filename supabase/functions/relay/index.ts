@@ -6,7 +6,7 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
   auth: { persistSession: false, autoRefreshToken: false },
 });
 const bucket = "photo-finder-private";
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, x-event-token, x-event-id, x-job-token, x-job-lease, apikey", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Cache-Control": "no-store" };
+const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, x-event-token, x-event-id, x-job-token, x-job-lease, x-gallery-session, x-gallery-job-lease, apikey", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Cache-Control": "no-store" };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))).map((b) => b.toString(16).padStart(2, "0")).join("");
 const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32))).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -59,6 +59,25 @@ async function cleanExpired() {
       cleaned++;
     }));
   }
+  const expiredGalleryJobs = check(await db.from("photo_finder_gallery_jobs")
+    .select("id,object_path")
+    .lt("expires_at", cutoff)
+    .order("expires_at")
+    .limit(200));
+  for (const old of expiredGalleryJobs || []) {
+    if (old.object_path) check(await db.storage.from(bucket).remove([old.object_path]));
+    check(await db.from("photo_finder_gallery_jobs")
+      .delete()
+      .eq("id", old.id)
+      .lt("expires_at", cutoff));
+    cleaned++;
+  }
+  check(await db.from("photo_finder_gallery_sessions")
+    .delete()
+    .lt("expires_at", new Date().toISOString()));
+  check(await db.from("photo_finder_gallery_login_attempts")
+    .delete()
+    .lt("attempted_at", new Date(Date.now() - 24 * 60 * 60_000).toISOString()));
   return cleaned;
 }
 
@@ -84,6 +103,82 @@ async function workerJob(eventId: string, id: string, lease: string) {
   if (!uuid.test(id) || !uuid.test(lease)) fail("Invalid lease", 403);
   const job = check(await db.from("photo_finder_jobs").select("id,event_id,selfie_path,status,lease_id").eq("id", id).eq("event_id", eventId).eq("status", "processing").eq("lease_id", lease).gt("lease_expires_at", new Date().toISOString()).gt("expires_at", new Date().toISOString()).maybeSingle());
   if (!job) fail("Request lease expired", 409);
+  return job!;
+}
+
+const fromHex = (value: string) => new Uint8Array(value.match(/.{2}/g)!.map((byte) => Number.parseInt(byte, 16)));
+const toHex = (value: ArrayBuffer) => Array.from(new Uint8Array(value)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+async function deriveGalleryPassword(password: string, salt: string, iterations: number) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const derived = await crypto.subtle.deriveBits({
+    name: "PBKDF2",
+    salt: fromHex(salt),
+    iterations,
+    hash: "SHA-256",
+  }, key, 256);
+  return toHex(derived);
+}
+
+function secureEqual(left: string, right: string) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index++) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+async function gallerySession(req: Request) {
+  const secret = req.headers.get("x-gallery-session") || "";
+  if (!/^[a-f0-9]{64}$/i.test(secret)) fail("Gallery session expired", 401);
+  const session = check(await db.from("photo_finder_gallery_sessions")
+    .select("id,gallery_id")
+    .eq("token_hash", await hash(secret))
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle());
+  if (!session) fail("Gallery session expired", 401);
+  const gallery = check(await db.from("photo_finder_gallery_links")
+    .select("id,event_id")
+    .eq("id", session.gallery_id)
+    .eq("active", true)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle());
+  if (!gallery) fail("Gallery link expired", 403);
+  const event = check(await db.from("photo_finder_events")
+    .select("id")
+    .eq("id", gallery.event_id)
+    .eq("active", true)
+    .maybeSingle());
+  if (!event) fail("Gallery unavailable", 403);
+  return { session, gallery };
+}
+
+async function galleryWorkerJob(eventId: string, id: string, lease: string) {
+  if (!uuid.test(id) || !uuid.test(lease)) fail("Invalid gallery lease", 403);
+  const job = check(await db.from("photo_finder_gallery_jobs")
+    .select("id,gallery_id,event_id,photo_id,filename,variant,status,lease_id")
+    .eq("id", id)
+    .eq("event_id", eventId)
+    .eq("status", "processing")
+    .eq("lease_id", lease)
+    .gt("lease_expires_at", new Date().toISOString())
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle());
+  if (!job) fail("Gallery job lease expired", 409);
+  const gallery = check(await db.from("photo_finder_gallery_links")
+    .select("id")
+    .eq("id", job.gallery_id)
+    .eq("active", true)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle());
+  if (!gallery) fail("Gallery is no longer active", 403);
   return job!;
 }
 
@@ -231,6 +326,186 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (path === "/guest/gallery/login" && req.method === "POST") {
+      const payload = await req.json() as { token?: unknown; password?: unknown } | null;
+      const shareToken = payload?.token;
+      const password = payload?.password;
+      if (typeof shareToken !== "string" || !/^[a-f0-9]{64}$/i.test(shareToken) ||
+          typeof password !== "string" || password.length < 1 || password.length > 128) {
+        fail("Invalid gallery link or password", 403);
+      }
+      const gallery = check(await db.from("photo_finder_gallery_links")
+        .select("id,event_id,password_salt,password_hash,password_iterations,expires_at")
+        .eq("token_hash", await hash(shareToken))
+        .eq("active", true)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle());
+      if (!gallery) fail("Invalid gallery link or password", 403);
+      const recentAttempts = await db.from("photo_finder_gallery_login_attempts")
+        .select("id", { count: "exact", head: true })
+        .eq("gallery_id", gallery.id)
+        .gt("attempted_at", new Date(Date.now() - 15 * 60_000).toISOString());
+      check(recentAttempts);
+      if ((recentAttempts.count || 0) >= 10) fail("Too many attempts. Try again later.", 429);
+      const suppliedHash = await deriveGalleryPassword(password, gallery.password_salt, gallery.password_iterations);
+      if (!secureEqual(suppliedHash, gallery.password_hash)) {
+        check(await db.from("photo_finder_gallery_login_attempts").insert({ gallery_id: gallery.id }));
+        fail("Invalid gallery link or password", 403);
+      }
+      const activeEvent = check(await db.from("photo_finder_events")
+        .select("id")
+        .eq("id", gallery.event_id)
+        .eq("active", true)
+        .maybeSingle());
+      if (!activeEvent) fail("Gallery unavailable", 403);
+      check(await db.from("photo_finder_gallery_login_attempts").delete().eq("gallery_id", gallery.id));
+      const sessionToken = token();
+      const sessionExpiresAt = new Date(Date.now() + 12 * 60 * 60_000).toISOString();
+      check(await db.from("photo_finder_gallery_sessions").insert({
+        gallery_id: gallery.id,
+        token_hash: await hash(sessionToken),
+        expires_at: sessionExpiresAt,
+      }));
+      return json({ session_token: sessionToken, expires_at: sessionExpiresAt });
+    }
+
+    if (path === "/guest/gallery/photos" && req.method === "GET") {
+      const { gallery } = await gallerySession(req);
+      const url = new URL(req.url);
+      const limitText = url.searchParams.get("limit") || "60";
+      const afterText = url.searchParams.get("after") || "0";
+      if (!/^\d+$/.test(limitText) || !/^\d+$/.test(afterText)) fail("Invalid page", 400);
+      const limit = Number(limitText), after = Number(afterText);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+          !Number.isSafeInteger(after) || after < 0) fail("Invalid page", 400);
+      let query = db.from("photo_finder_gallery_photos")
+        .select("photo_id,filename")
+        .eq("event_id", gallery.event_id)
+        .order("photo_id")
+        .limit(limit);
+      if (after > 0) query = query.gt("photo_id", after);
+      const photos = check(await query);
+      const rows = photos || [];
+      return json({
+        photos: rows.map((photo) => ({ id: Number(photo.photo_id), filename: photo.filename })),
+        next_cursor: rows.length === limit ? String(rows[rows.length - 1].photo_id) : null,
+      });
+    }
+
+    if (path === "/guest/gallery/jobs" && req.method === "POST") {
+      const { gallery } = await gallerySession(req);
+      const payload = await req.json() as { photo_id?: unknown; variant?: unknown } | null;
+      const photoId = payload?.photo_id;
+      const variant = payload?.variant;
+      if (typeof photoId !== "number" || !Number.isSafeInteger(photoId) || photoId <= 0 ||
+          (variant !== "thumbnail" && variant !== "original")) fail("Invalid photo request", 400);
+      const photo = check(await db.from("photo_finder_gallery_photos")
+        .select("photo_id,filename")
+        .eq("event_id", gallery.event_id)
+        .eq("photo_id", photoId)
+        .maybeSingle());
+      if (!photo) fail("Photo not found", 404);
+      const now = new Date().toISOString();
+      const stale = check(await db.from("photo_finder_gallery_jobs")
+        .select("id,object_path")
+        .eq("gallery_id", gallery.id)
+        .eq("photo_id", photoId)
+        .eq("variant", variant)
+        .lt("expires_at", now)
+        .in("status", ["pending", "processing", "ready"]));
+      for (const old of stale || []) {
+        if (old.object_path) check(await db.storage.from(bucket).remove([old.object_path]));
+        check(await db.from("photo_finder_gallery_jobs")
+          .update({ status: "expired", object_path: null })
+          .eq("id", old.id)
+          .lt("expires_at", now));
+      }
+      const active = check(await db.from("photo_finder_gallery_jobs")
+        .select("id,status")
+        .eq("gallery_id", gallery.id)
+        .eq("photo_id", photoId)
+        .eq("variant", variant)
+        .gt("expires_at", now)
+        .in("status", ["pending", "processing", "ready"])
+        .maybeSingle());
+      if (active) return json({ job_id: active.id, status: active.status });
+      const recentJobs = await db.from("photo_finder_gallery_jobs")
+        .select("id", { count: "exact", head: true })
+        .eq("gallery_id", gallery.id)
+        .gt("created_at", new Date(Date.now() - 60_000).toISOString());
+      check(recentJobs);
+      if ((recentJobs.count || 0) >= 60) fail("Too many photo requests. Please wait a moment.", 429);
+      const activeJobs = await db.from("photo_finder_gallery_jobs")
+        .select("id", { count: "exact", head: true })
+        .eq("gallery_id", gallery.id)
+        .gt("expires_at", now)
+        .in("status", ["pending", "processing", "ready"]);
+      check(activeJobs);
+      if ((activeJobs.count || 0) >= 8) fail("The gallery is busy. Please wait for photos to finish loading.", 429);
+      const eventJobs = await db.from("photo_finder_gallery_jobs")
+        .select("id", { count: "exact", head: true })
+        .eq("event_id", gallery.event_id)
+        .gt("expires_at", now)
+        .in("status", ["pending", "processing", "ready"]);
+      check(eventJobs);
+      if ((eventJobs.count || 0) >= 12) fail("The gallery is busy. Please wait for photos to finish loading.", 429);
+      const inserted = await db.from("photo_finder_gallery_jobs").insert({
+        gallery_id: gallery.id,
+        event_id: gallery.event_id,
+        photo_id: photoId,
+        filename: photo.filename,
+        variant,
+      }).select("id,status").single();
+      if (inserted.error?.code === "23505") {
+        const duplicate = check(await db.from("photo_finder_gallery_jobs")
+          .select("id,status")
+          .eq("gallery_id", gallery.id)
+          .eq("photo_id", photoId)
+          .eq("variant", variant)
+          .in("status", ["pending", "processing", "ready"])
+          .maybeSingle());
+        if (duplicate) return json({ job_id: duplicate.id, status: duplicate.status });
+      }
+      const job = check(inserted);
+      return json({ job_id: job.id, status: job.status }, 202);
+    }
+
+    const galleryJobMatch = path.match(/^\/guest\/gallery\/jobs\/([0-9a-f-]{36})(\/file)?$/i);
+    if (galleryJobMatch && req.method === "GET") {
+      const { gallery } = await gallerySession(req);
+      if (!uuid.test(galleryJobMatch[1])) fail("Photo request not found", 404);
+      const job = check(await db.from("photo_finder_gallery_jobs")
+        .select("id,filename,variant,status,object_path")
+        .eq("id", galleryJobMatch[1])
+        .eq("gallery_id", gallery.id)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle());
+      if (!job) fail("Photo request not found", 404);
+      if (!galleryJobMatch[2]) return json({ status: job.status });
+      if (job.status !== "ready" || !job.object_path) fail("Photo is not ready", 409);
+      const image = check(await db.storage.from(bucket).download(job.object_path));
+      if (!image) fail("Photo is no longer available", 404);
+      check(await db.storage.from(bucket).remove([job.object_path]));
+      const consumed = check(await db.from("photo_finder_gallery_jobs")
+        .update({ status: "expired", object_path: null })
+        .eq("id", job.id)
+        .eq("gallery_id", gallery.id)
+        .eq("status", "ready")
+        .select("id")
+        .maybeSingle());
+      if (!consumed) fail("Photo is no longer available", 409);
+      const headers: Record<string, string> = {
+        ...cors,
+        "Cache-Control": "no-store",
+        "Content-Type": job.variant === "thumbnail" ? "image/webp" : image.type || "application/octet-stream",
+        "X-Content-Type-Options": "nosniff",
+      };
+      if (job.variant === "original") {
+        headers["Content-Disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(job.filename)}`;
+      }
+      return new Response(image, { headers });
+    }
+
     if (path === "/maintenance/cleanup" && req.method === "POST") {
       if (!/^[a-f0-9]{64}$/i.test(auth)) fail("Invalid credentials", 401);
       const config = check(await db.from("photo_finder_maintenance").select("secret_hash").eq("id", 1).maybeSingle());
@@ -322,6 +597,286 @@ Deno.serve(async (req) => {
           filename: photo.name,
           updated_at: new Date().toISOString(),
         }, { onConflict: "event_id,photo_id" }));
+        return json({ ok: true });
+      }
+      if (path === "/worker/gallery/manifest" && req.method === "GET") {
+        const url = new URL(req.url);
+        const offsetText = url.searchParams.get("offset") || "0";
+        const limitText = url.searchParams.get("limit") || "500";
+        if (!/^\d+$/.test(offsetText) || !/^\d+$/.test(limitText)) fail("Invalid manifest page");
+        const offset = Number(offsetText), limit = Number(limitText);
+        if (!Number.isSafeInteger(offset) || offset < 0 ||
+            !Number.isSafeInteger(limit) || limit < 1 || limit > 500) fail("Invalid manifest page");
+        const manifest = await db.from("photo_finder_gallery_photos")
+          .select("photo_id", { count: "exact", head: true })
+          .eq("event_id", event.id);
+        check(manifest);
+        const photos = check(await db.from("photo_finder_gallery_photos")
+          .select("photo_id,filename")
+          .eq("event_id", event.id)
+          .order("photo_id")
+          .range(offset, offset + limit - 1));
+        const rows = photos || [];
+        return json({
+          event_name: event.name,
+          photo_count: manifest.count || 0,
+          photos: rows.map((photo) => ({ photo_id: Number(photo.photo_id), filename: photo.filename })),
+          next_offset: rows.length === limit ? offset + rows.length : null,
+        });
+      }
+      if (path === "/worker/gallery/manifest" && req.method === "POST") {
+        const payload = await req.json() as {
+          event_name?: unknown;
+          generation?: unknown;
+          photos?: unknown;
+          complete?: unknown;
+        } | null;
+        const photos = payload?.photos;
+        if (payload?.event_name !== event.name || typeof payload.generation !== "string" ||
+            !uuid.test(payload.generation) || !Array.isArray(photos) || photos.length > 500 ||
+            typeof payload.complete !== "boolean") fail("Invalid gallery manifest");
+        const seen = new Set<number>();
+        const rows = photos.map((photo: unknown) => {
+          const item = photo as { photo_id?: unknown; filename?: unknown } | null;
+          if (!item || typeof item !== "object" ||
+              typeof item.photo_id !== "number" || !Number.isSafeInteger(item.photo_id) ||
+              item.photo_id <= 0 || typeof item.filename !== "string" ||
+              item.filename.length < 1 || item.filename.length > 255 ||
+              item.filename.trim() !== item.filename ||
+              /[/\\\u0000-\u001f\u007f]/.test(item.filename) ||
+              seen.has(item.photo_id)) fail("Invalid gallery manifest");
+          seen.add(item.photo_id);
+          return {
+            event_id: event.id,
+            photo_id: item.photo_id,
+            filename: item.filename,
+            sync_generation: payload.generation,
+            updated_at: new Date().toISOString(),
+          };
+        });
+        if (rows.length) {
+          check(await db.from("photo_finder_gallery_photos")
+            .upsert(rows, { onConflict: "event_id,photo_id" }));
+        }
+        if (payload.complete) {
+          while (true) {
+            const stalePhotos = check(await db.from("photo_finder_gallery_photos")
+              .select("photo_id")
+              .eq("event_id", event.id)
+              .neq("sync_generation", payload.generation)
+              .order("photo_id")
+              .limit(500));
+            const staleIds = (stalePhotos || []).map((photo) => photo.photo_id);
+            if (!staleIds.length) break;
+            while (true) {
+              const staleJobs = check(await db.from("photo_finder_gallery_jobs")
+                .select("id,object_path")
+                .eq("event_id", event.id)
+                .in("photo_id", staleIds)
+                .order("id")
+                .limit(500));
+              const jobIds = (staleJobs || []).map((job) => job.id);
+              if (!jobIds.length) break;
+              const paths = (staleJobs || []).flatMap((job) => job.object_path ? [job.object_path] : []);
+              for (let offset = 0; offset < paths.length; offset += 100) {
+                check(await db.storage.from(bucket).remove(paths.slice(offset, offset + 100)));
+              }
+              check(await db.from("photo_finder_gallery_jobs").delete().in("id", jobIds));
+            }
+            check(await db.from("photo_finder_gallery_photos")
+              .delete()
+              .eq("event_id", event.id)
+              .in("photo_id", staleIds)
+              .neq("sync_generation", payload.generation));
+          }
+        }
+        return json({ ok: true });
+      }
+      if (path === "/worker/gallery/create" && req.method === "POST") {
+        const payload = await req.json() as { password?: unknown; expires_days?: unknown } | null;
+        const password = payload?.password;
+        const expiresDays = payload?.expires_days;
+        if (typeof password !== "string" || password.length < 12 || password.length > 128 ||
+            typeof expiresDays !== "number" || !Number.isInteger(expiresDays) ||
+            expiresDays < 1 || expiresDays > 90) fail("Use a 12-128 character password and an expiry of 1-90 days.");
+        const shareToken = token();
+        const salt = token();
+        const iterations = 310000;
+        const passwordHash = await deriveGalleryPassword(password, salt, iterations);
+        const expiresAt = new Date(Date.now() + expiresDays * 24 * 60 * 60_000).toISOString();
+        const gallery = check(await db.from("photo_finder_gallery_links").insert({
+          event_id: event.id,
+          token_hash: await hash(shareToken),
+          password_salt: salt,
+          password_hash: passwordHash,
+          password_iterations: iterations,
+          expires_at: expiresAt,
+        }).select("id,expires_at").single());
+        return json({ gallery_id: gallery.id, token: shareToken, expires_at: gallery.expires_at });
+      }
+      if (path === "/worker/gallery/cleanup" && req.method === "POST") {
+        const cutoff = new Date(Date.now() - 30 * 60_000).toISOString();
+        const expired = check(await db.from("photo_finder_gallery_jobs")
+          .select("id,object_path")
+          .eq("event_id", event.id)
+          .lt("expires_at", cutoff)
+          .order("expires_at")
+          .limit(200));
+        for (const job of expired || []) {
+          if (job.object_path) check(await db.storage.from(bucket).remove([job.object_path]));
+          check(await db.from("photo_finder_gallery_jobs")
+            .delete()
+            .eq("id", job.id)
+            .lt("expires_at", cutoff));
+        }
+        const galleries = check(await db.from("photo_finder_gallery_links")
+          .select("id")
+          .eq("event_id", event.id));
+        const galleryIds = (galleries || []).map((gallery) => gallery.id);
+        if (galleryIds.length) {
+          check(await db.from("photo_finder_gallery_sessions")
+            .delete()
+            .in("gallery_id", galleryIds)
+            .lt("expires_at", new Date().toISOString()));
+          check(await db.from("photo_finder_gallery_login_attempts")
+            .delete()
+            .in("gallery_id", galleryIds)
+            .lt("attempted_at", new Date(Date.now() - 24 * 60 * 60_000).toISOString()));
+        }
+        return json({ cleaned: (expired || []).length });
+      }
+      const revokeGallery = path.match(/^\/worker\/gallery\/([0-9a-f-]{36})\/revoke$/i);
+      if (revokeGallery && req.method === "POST") {
+        if (!uuid.test(revokeGallery[1])) fail("Gallery not found", 404);
+        const gallery = check(await db.from("photo_finder_gallery_links")
+          .select("id")
+          .eq("id", revokeGallery[1])
+          .eq("event_id", event.id)
+          .maybeSingle());
+        if (!gallery) fail("Gallery not found", 404);
+        for (let start = 0; ; start += 500) {
+          const jobs = check(await db.from("photo_finder_gallery_jobs")
+            .select("id,object_path")
+            .eq("gallery_id", gallery.id)
+            .order("id")
+            .range(start, start + 499));
+          if (!jobs?.length) break;
+          const paths = jobs.flatMap((job) => job.object_path ? [job.object_path] : []);
+          for (let offset = 0; offset < paths.length; offset += 100) {
+            check(await db.storage.from(bucket).remove(paths.slice(offset, offset + 100)));
+          }
+          if (jobs.length < 500) break;
+        }
+        check(await db.from("photo_finder_gallery_links")
+          .update({ active: false })
+          .eq("id", gallery.id));
+        check(await db.from("photo_finder_gallery_jobs").delete().eq("gallery_id", gallery.id));
+        check(await db.from("photo_finder_gallery_sessions").delete().eq("gallery_id", gallery.id));
+        check(await db.from("photo_finder_gallery_login_attempts").delete().eq("gallery_id", gallery.id));
+        return json({ ok: true });
+      }
+      if (path === "/worker/gallery/claim" && req.method === "POST") {
+        const now = new Date().toISOString();
+        const exhausted = check(await db.from("photo_finder_gallery_jobs")
+          .select("id,status")
+          .eq("event_id", event.id)
+          .gte("attempt", 5)
+          .or(`and(status.eq.processing,lease_expires_at.lt.${now}),status.eq.pending`)
+          .limit(20));
+        for (const old of exhausted || []) {
+          let update = db.from("photo_finder_gallery_jobs")
+            .update({ status: "failed", error_message: "Photo is temporarily unavailable." })
+            .eq("id", old.id)
+            .eq("status", old.status)
+            .gte("attempt", 5);
+          if (old.status === "processing") update = update.lt("lease_expires_at", now);
+          check(await update);
+        }
+        const candidates = check(await db.from("photo_finder_gallery_jobs")
+          .select("id,gallery_id,status,attempt,photo_id,filename,variant")
+          .eq("event_id", event.id)
+          .gt("expires_at", now)
+          .lt("attempt", 5)
+          .or(`status.eq.pending,and(status.eq.processing,lease_expires_at.lt.${now})`)
+          .order("created_at")
+          .limit(1));
+        if (!candidates?.length) return json({ job: null });
+        const candidate = candidates[0], lease = crypto.randomUUID();
+        const activeGallery = check(await db.from("photo_finder_gallery_links")
+          .select("id")
+          .eq("id", candidate.gallery_id)
+          .eq("active", true)
+          .gt("expires_at", now)
+          .maybeSingle());
+        if (!activeGallery) {
+          check(await db.from("photo_finder_gallery_jobs")
+            .update({ status: "expired" })
+            .eq("id", candidate.id)
+            .in("status", ["pending", "processing"]));
+          return json({ job: null });
+        }
+        let update = db.from("photo_finder_gallery_jobs")
+          .update({
+            status: "processing",
+            lease_id: lease,
+            lease_expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+            attempt: candidate.attempt + 1,
+          })
+          .eq("id", candidate.id)
+          .eq("status", candidate.status)
+          .eq("attempt", candidate.attempt);
+        if (candidate.status === "processing") update = update.lt("lease_expires_at", now);
+        const claimed = check(await update.select("id").maybeSingle());
+        if (!claimed) return json({ job: null });
+        return json({
+          job: {
+            id: candidate.id,
+            lease,
+            photo_id: candidate.photo_id,
+            filename: candidate.filename,
+            variant: candidate.variant,
+          },
+        });
+      }
+      const workerGalleryJob = path.match(/^\/worker\/gallery\/jobs\/([0-9a-f-]{36})\/(complete|fail)$/i);
+      if (workerGalleryJob && req.method === "POST") {
+        const lease = req.headers.get("x-gallery-job-lease") || "";
+        const job = await galleryWorkerJob(event.id, workerGalleryJob[1], lease);
+        if (workerGalleryJob[2] === "fail") {
+          check(await db.from("photo_finder_gallery_jobs")
+            .update({ status: "failed", error_message: "Photo is temporarily unavailable." })
+            .eq("id", job.id)
+            .eq("status", "processing")
+            .eq("lease_id", lease));
+          return json({ ok: true });
+        }
+        const form = await readForm(req, 51 * 1024 * 1024);
+        const entry = form.get("photo");
+        const photo = entry instanceof File ? entry : fail("Invalid gallery photo");
+        const validType = job.variant === "thumbnail"
+          ? photo.type === "image/webp" && photo.size <= 2 * 1024 * 1024
+          : ["image/jpeg", "image/png", "image/webp"].includes(photo.type) &&
+            photo.size <= 50 * 1024 * 1024;
+        if (photo.size < 1 || !validType) fail("Invalid gallery photo");
+        const objectPath = `gallery/${job.gallery_id}/${job.id}.${job.variant === "thumbnail" ? "webp" : "original"}`;
+        check(await db.storage.from(bucket).upload(objectPath, photo, {
+          contentType: photo.type,
+          upsert: true,
+        }));
+        try {
+          await galleryWorkerJob(event.id, job.id, lease);
+          const updated = check(await db.from("photo_finder_gallery_jobs")
+            .update({ status: "ready", object_path: objectPath, error_message: null })
+            .eq("id", job.id)
+            .eq("status", "processing")
+            .eq("lease_id", lease)
+            .select("id")
+            .maybeSingle());
+          if (!updated) fail("Gallery job lease expired", 409);
+        } catch (error) {
+          check(await db.storage.from(bucket).remove([objectPath]));
+          throw error;
+        }
         return json({ ok: true });
       }
       if (path === "/worker/claim" && req.method === "POST") {

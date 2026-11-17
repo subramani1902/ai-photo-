@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
@@ -178,6 +179,65 @@ class RelayWorkerTests(unittest.TestCase):
         paths = [call.args[1] for call in send.call_args_list]
         self.assertFalse(any(path.endswith(("/results", "/complete")) for path in paths))
         self.assertIn(f"/worker/jobs/{JOB_ID}/release", paths)
+
+    def test_gallery_manifest_batches_photos_and_marks_only_the_last_batch_complete(self):
+        context = MagicMock()
+        db = context.__enter__.return_value
+        event_query, photo_query = Mock(), Mock()
+        event_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(event_name="Candid Test")
+        photo_query.filter_by.return_value.order_by.return_value.all.return_value = [
+            (1, "one.jpg"), (2, "two.jpg"), (3, "three.jpg"),
+        ]
+        db.query.side_effect = [event_query, photo_query]
+        with patch("app.database.db.SessionLocal", return_value=context), \
+                patch("app.services.relay_worker.GALLERY_MANIFEST_BATCH_SIZE", 2), \
+                patch.object(self.worker, "request") as send:
+            self.worker.sync_gallery_manifest()
+
+        calls = [call for call in send.call_args_list if call.args[1] == "/worker/gallery/manifest"]
+        self.assertEqual(len(calls), 2)
+        payloads = [call.kwargs["json"] for call in calls]
+        self.assertEqual([len(payload["photos"]) for payload in payloads], [2, 1])
+        self.assertEqual([payload["complete"] for payload in payloads], [False, True])
+        self.assertEqual(payloads[0]["generation"], payloads[1]["generation"])
+
+    def test_gallery_original_upload_reads_the_requested_resolved_file(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / "original.jpg"
+            source.write_bytes(b"original photo bytes")
+            context = MagicMock()
+            db = context.__enter__.return_value
+            event_query, photo_query = Mock(), Mock()
+            event_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(event_name="Candid Test")
+            photo_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(
+                id=42, filename=source.name,
+            )
+            db.query.side_effect = [event_query, photo_query]
+            claim = Mock()
+            claim.json.return_value = {
+                "job": {
+                    "id": JOB_ID,
+                    "lease": LEASE_ID,
+                    "photo_id": 42,
+                    "variant": "original",
+                }
+            }
+            uploaded = {}
+
+            def request(method, path, **kwargs):
+                if path == "/worker/gallery/claim":
+                    return claim
+                if path.endswith("/complete"):
+                    uploaded["bytes"] = kwargs["files"]["photo"][1].read()
+                    uploaded["type"] = kwargs["files"]["photo"][2]
+                return Mock()
+
+            with patch("app.database.db.SessionLocal", return_value=context), \
+                    patch("app.services.photo_sources.resolve_photo_file", return_value=source), \
+                    patch.object(self.worker, "request", side_effect=request):
+                self.assertTrue(self.worker.process_gallery_once())
+
+            self.assertEqual(uploaded, {"bytes": b"original photo bytes", "type": "image/jpeg"})
 
 
 if __name__ == "__main__":

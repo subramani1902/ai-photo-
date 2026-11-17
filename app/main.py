@@ -14,6 +14,7 @@ from app.api.events import router as events_router
 from app.api.photos import router as photos_router
 from app.api.people import router as people_router
 from app.api.firebase_auth import router as firebase_auth_router
+from app.api.client_events import router as client_events_router
 from app.services.person_groups import init_person_groups
 
 
@@ -64,6 +65,7 @@ app.include_router(photos_router)
 app.include_router(guest_router)
 app.include_router(people_router)
 app.include_router(firebase_auth_router)
+app.include_router(client_events_router)
 
 
 @app.on_event("startup")

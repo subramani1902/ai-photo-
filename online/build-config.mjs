@@ -22,6 +22,13 @@ export function buildPublicConfiguration(env = process.env) {
       || !/^1:[0-9]+:web:[a-f0-9]+$/.test(firebase.appId)
       || Object.values(firebase).some(value => /[\r\n]/.test(value))) throw new Error("Invalid public Firebase web-app configuration.");
   const configuration = { enabled: true, firebase, emulatorMode: emulatorMode === "true" };
+  if (env.FIREBASE_PHOTO_API_URL?.trim()) {
+    const base = new URL(env.FIREBASE_PHOTO_API_URL.trim());
+    if (base.protocol !== "https:" || base.username || base.password || base.search || base.hash || base.pathname !== "/") {
+      throw new Error("FIREBASE_PHOTO_API_URL must be a trusted HTTPS origin without a path or credentials.");
+    }
+    configuration.photoApiBaseUrl = base.origin;
+  }
   const emulatorKeys = ["FIREBASE_AUTH_EMULATOR_HOST", "FIRESTORE_EMULATOR_HOST", "STORAGE_EMULATOR_HOST", "FIREBASE_STORAGE_EMULATOR_HOST"];
   if (configuration.emulatorMode) {
     const host = env.FIREBASE_AUTH_EMULATOR_HOST?.trim() ?? "";

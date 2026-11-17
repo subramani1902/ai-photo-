@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#f8f7f2">
+  <title>Private event gallery | SM Photography</title>
+  <link rel="icon" href="./favicon.webp" type="image/webp">
+  <link rel="stylesheet" href="./gallery.css">
+</head>
+<body>
+  <header class="gallery-header">
+    <a class="brand" href="./" aria-label="SM Photography home">
+      <img src="./favicon.webp" alt="">
+      <span>SM Photography<small>YOUR MOMENTS, FOUND</small></span>
+    </a>
+  </header>
+  <main>
+    <section id="login-panel" class="panel">
+      <p class="eyebrow">PRIVATE EVENT GALLERY</p>
+      <h1>Your <em>moments.</em></h1>
+      <p class="intro">Enter the password shared by your photographer to browse and download the event photos.</p>
+      <form id="login-form">
+        <label for="gallery-password">Gallery password</label>
+        <input id="gallery-password" type="password" autocomplete="current-password" minlength="1" maxlength="128" required>
+        <button id="login-button" type="submit">Open gallery <span aria-hidden="true">↗</span></button>
+      </form>
+      <p id="login-message" class="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="gallery-panel" hidden>
+      <p class="eyebrow">PRIVATE EVENT GALLERY</p>
+      <h1>Your <em>moments.</em></h1>
+      <p class="intro">Browse the album and download original photos individually.</p>
+      <p class="availability">Photos load on demand from the studio’s external drive. The studio computer, drive, and internet connection must be available while you browse.</p>
+      <div id="photo-grid" class="photo-grid" aria-live="polite"></div>
+      <p id="gallery-message" class="message" role="status" aria-live="polite"></p>
+      <button id="load-more" class="load-more" type="button" hidden>Load more photos</button>
+    </section>
+  </main>
+  <script type="module" src="./gallery.js"></script>
+</body>
+</html>

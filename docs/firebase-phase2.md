@@ -32,8 +32,10 @@ face engine/index, camera importer, original-photo storage and event/QR workflow
   or administrator permissions automatically.
 - `online/server/` contains server-only helpers for the metadata API in Phase 3.
   There are no new Vercel API functions. `online/vercel.json` runs the public
-  configuration generator at build time; configure the selected project's public
-  web values as Vercel environment variables before deploying the sign-in page.
+  configuration generator at build time. The six public Firebase web settings
+  are configured for Preview and Production in `smblog/ai-photo-k5fu`, whose
+  verified public alias is `sm-photo-studio.vercel.app`. The Admin key has not
+  been uploaded to Vercel.
 - Firestore rules deny direct reads/writes for everyone, including authenticated
   browsers. There are no client collections yet. Admin SDK access uses server
   IAM and must also enforce the API's explicit authentication and authorization.
@@ -143,6 +145,15 @@ file from the deployment's public Firebase environment values; it must never
 receive the service-account JSON as a public value. No Vercel production release
 is made by this setup step.
 
+Verified protected Preview:
+https://ai-photo-k5fu-ag4azrv17-smblog.vercel.app/account.html
+
+This Preview contains only the public frontend files and deployment configuration.
+Authenticated Vercel checks confirmed the account page and generated Firebase
+configuration return HTTP 200, use the selected project and keep the existing
+guest Supabase relay URL. Production has not been promoted. The six public web
+settings are configured in both Vercel Preview and Production for the next build.
+
 ## Offline tests and emulator isolation
 
 ```powershell
@@ -211,6 +222,13 @@ needs a domain whose DNS the user controls. `smphotography.in` is a proposed nam
 not yet purchased. The website can remain on Vercel; a future owned-domain API
 hostname must be configured from verified DNS/tunnel values. No tunnel or DNS
 change has been made.
+
+The official .in registry lookup found `smphotography.in` already registered.
+`smphotographyworld.in` and `smphotographystudio.in` returned no registration
+record at the time of checking; confirm availability and price with the registrar.
+No domain purchase is authorized or performed. The Firebase project currently
+has no billing linked. Provisioning Firebase Storage requires the owner to enable
+the Blaze plan first; no billing upgrade or bucket creation has been performed.
 
 References: [Admin setup](https://firebase.google.com/docs/admin/setup),
 [ID-token verification](https://firebase.google.com/docs/auth/admin/verify-id-tokens),
