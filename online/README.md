@@ -227,10 +227,19 @@ upload the entire album in advance: thumbnails are temporarily transferred as
 the client browses, and an original is transferred only when its download
 button is selected. Keep the studio computer, external drive, internet
 connection, and relay worker running while the client uses the gallery.
+The separate `app.services.gallery_worker` serves private gallery transfers even
+when selfie searches occupy both search slots. `start-all.ps1` starts it alongside
+the existing services and includes it in future supervisor checks. It reads the
+existing authorized gallery jobs; it never runs face matching or changes photos.
+It can also be started separately:
+
+```powershell
+.\venv\Scripts\python.exe -B -m app.services.gallery_worker --event-id 3 --secrets-file .env.relay --relay-url https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay
+```
 
 Apply the gallery migration and deploy the relay function and Vercel website
-before creating a link. The worker must be running, and the importer must have
-finished syncing the entire folder. This command checks that every supported
+before creating a link. The worker must be running. By default the importer must
+have finished syncing the entire folder. This command checks that every supported
 file in the watched folder is tracked locally and that the relay manifest is
 up to date; it refuses to create a partial album. It then prompts for a
 12-128 character password and creates a link that expires after 30 days:
@@ -238,6 +247,35 @@ up to date; it refuses to create a partial album. It then prompts for a
 ```powershell
 .\venv\Scripts\python.exe -m utilities.manage_photo_gallery --event-id 3 --secrets-file .env.relay
 ```
+
+To explicitly open an album while indexing continues, add `--allow-indexing`.
+The link includes the current authorized manifest and gains photos as the
+importer and relay synchronize. It must not be described as a completed album
+until the importer reports zero pending files. To generate a strong password
+and save the actual link and password privately, use:
+
+```powershell
+.\venv\Scripts\python.exe -B -m utilities.manage_photo_gallery --event-id 3 --allow-indexing --generate-password --output .secrets/event-3-gallery.json
+```
+
+The output file must be new and inside the ignored `.secrets` folder. Generated
+passwords are not printed to the terminal. Do not publish this file or embed its
+private link into the public website. The website menu's **Private full gallery**
+entry opens the login page; clients use their individual shared link and password.
+
+Clients can choose **♡ Choose favourite**, review **Show favourites**, then select
+**Download editor CSV**. The CSV contains selection order, event ID/name, photo
+ID, original filename and `selected_for_editing=yes`; it includes no image bytes,
+passwords, access tokens, biometric data or absolute drive paths. It uses UTF-8
+with a BOM, quotes fields and neutralizes spreadsheet formulas. Send it to the
+editor with the corresponding original photo folder. Photos are not modified
+by the selection or export.
+
+Shared-password gallery favourites stay in that browser tab and survive reloads
+there; export the CSV before closing the tab. The Firebase account gallery saves
+favourites to the client's existing Firestore membership. Its **Download
+favourites CSV** button reads every favourites page, including photos not yet
+displayed, with Firebase authorization checked on each request.
 
 Send the link and password to the client separately. The client can browse
 compressed previews and download individual originals. Temporary relay copies

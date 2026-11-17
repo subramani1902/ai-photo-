@@ -1,3 +1,5 @@
+import { createSelectionCsv, restoreSelection } from "./selection-csv.mjs";
+
 const RELAY = "https://dtfxnuxluuwvjdcyxmnc.supabase.co/functions/v1/relay";
 const $ = (selector) => document.querySelector(selector);
 const loginPanel = $("#login-panel");
@@ -7,14 +9,18 @@ const loginMessage = $("#login-message");
 const galleryMessage = $("#gallery-message");
 const loginButton = $("#login-button");
 const loadMoreButton = $("#load-more");
+const exportButton = $("#export-favourites"), favouriteFilter = $("#favourite-filter");
 const assetQueue = [];
 const queuedPhotos = new Map();
+const cards = new Map(), favourites = new Map(), previewUrls = new Set();
 let activeAssets = 0;
 let shareToken = location.hash.slice(1) || sessionStorage.getItem("photo-finder-gallery-token") || "";
 let sessionToken = sessionStorage.getItem("photo-finder-gallery-session") || "";
 let nextCursor = null;
 let loadingPage = false;
 let photoObserver;
+let galleryContext = {}, selectionKey = "", showFavourites = false, exporting = false;
+let generation = 0, requestsController = new AbortController();
 
 if (sessionStorage.getItem("photo-finder-gallery-session-token") !== shareToken) {
   sessionToken = "";
@@ -27,19 +33,65 @@ if (/^[a-f0-9]{64}$/i.test(shareToken)) {
   shareToken = "";
   sessionStorage.removeItem("photo-finder-gallery-token");
 }
+$("#gallery-link-field").hidden = Boolean(shareToken);
+$("#gallery-link").required = !shareToken;
+
+function resetAssets() {
+  generation++;
+  requestsController.abort(); requestsController = new AbortController();
+  assetQueue.length = 0; queuedPhotos.clear(); cards.clear();
+  photoObserver?.disconnect();
+  for (const url of previewUrls) URL.revokeObjectURL(url);
+  previewUrls.clear();
+}
+
+function persistFavourites() {
+  if (!selectionKey) return;
+  try { sessionStorage.setItem(selectionKey, JSON.stringify([...favourites.values()])); }
+  catch { galleryMessage.textContent = "Download your CSV before leaving this page; your browser could not save the favourites."; }
+}
+
+function updateFavourites() {
+  $("#favourite-count").textContent = String(favourites.size);
+  favouriteFilter.setAttribute("aria-pressed", String(showFavourites));
+  exportButton.disabled = !favourites.size || !sessionToken || exporting;
+  exportButton.textContent = exporting ? "Preparing CSV…" : `Download editor CSV (${favourites.size})`;
+  for (const [id, { card, button }] of cards) {
+    const chosen = favourites.has(id);
+    button.textContent = chosen ? "♥ Chosen for editing" : "♡ Choose favourite";
+    button.setAttribute("aria-pressed", String(chosen));
+    card.classList.toggle("is-favourite", chosen);
+    card.hidden = showFavourites && !chosen;
+  }
+  loadMoreButton.hidden = showFavourites || !nextCursor;
+}
+
+function applyContext(result) {
+  galleryContext = result;
+  if (typeof result.event_name === "string") $("#gallery-title").textContent = result.event_name;
+  if (typeof result.gallery_id === "string" && result.gallery_id !== selectionKey.replace("gallery-favourites:", "")) {
+    selectionKey = "gallery-favourites:" + result.gallery_id;
+    let saved;
+    try { saved = sessionStorage.getItem(selectionKey); } catch { /* In-memory selection still works. */ }
+    favourites.clear();
+    for (const [id, photo] of restoreSelection(saved)) favourites.set(id, photo);
+  }
+}
 
 function authHeaders() {
   return { "X-Gallery-Session": sessionToken };
 }
 
 function clearSession() {
+  resetAssets(); favourites.clear(); selectionKey = ""; galleryContext = {};
   sessionToken = "";
   sessionStorage.removeItem("photo-finder-gallery-session");
   sessionStorage.removeItem("photo-finder-gallery-session-token");
+  photoGrid.replaceChildren(); updateFavourites();
 }
 
 async function readResponse(response) {
-  if (response.status === 401) {
+  if ([401, 403].includes(response.status) && sessionToken) {
     clearSession();
     galleryPanel.hidden = true;
     loginPanel.hidden = false;
@@ -53,11 +105,14 @@ async function readResponse(response) {
 }
 
 async function startGallery() {
+  resetAssets();
+  loadingPage = false;
   loginPanel.hidden = true;
   galleryPanel.hidden = false;
   galleryMessage.textContent = "";
   photoGrid.replaceChildren();
   nextCursor = null;
+  showFavourites = false;
   if (photoObserver) photoObserver.disconnect();
   if ("IntersectionObserver" in window) {
     photoObserver = new IntersectionObserver((entries) => {
@@ -76,28 +131,31 @@ async function loadPage() {
   loadingPage = true;
   loadMoreButton.disabled = true;
   galleryMessage.textContent = "Loading the photo list…";
+  const version = generation;
   try {
     const params = new URLSearchParams({ limit: "60" });
     if (nextCursor) params.set("after", nextCursor);
     const response = await readResponse(await fetch(`${RELAY}/guest/gallery/photos?${params}`, {
-      headers: authHeaders(),
+      headers: authHeaders(), signal: requestsController.signal, cache: "no-store",
     }));
     const result = await response.json();
+    if (version !== generation) return;
+    applyContext(result);
     for (const photo of result.photos || []) addPhoto(photo);
     nextCursor = result.next_cursor;
-    loadMoreButton.hidden = !nextCursor;
+    updateFavourites();
     galleryMessage.textContent = photoGrid.childElementCount
-      ? `${photoGrid.childElementCount} photos listed. Select a photo to download its original.`
+      ? `${result.photo_count ?? photoGrid.childElementCount} photos available · ${photoGrid.childElementCount} listed. Choose favourites for your editor.`
       : "No photos are available in this gallery yet.";
   } catch (error) {
-    galleryMessage.textContent = error.message;
+    if (version === generation) galleryMessage.textContent = error.message;
   } finally {
-    loadingPage = false;
-    loadMoreButton.disabled = false;
+    if (version === generation) { loadingPage = false; loadMoreButton.disabled = false; }
   }
 }
 
 function addPhoto(photo) {
+  if (cards.has(photo.id)) return;
   const card = document.createElement("article");
   card.className = "photo-card";
   const frame = document.createElement("div");
@@ -114,14 +172,25 @@ function addPhoto(photo) {
   filename.className = "filename";
   filename.textContent = photo.filename;
   filename.title = photo.filename;
+  const favourite = document.createElement("button");
+  favourite.className = "favourite"; favourite.type = "button";
+  favourite.setAttribute("aria-label", "Choose " + photo.filename + " for editing");
+  favourite.addEventListener("click", () => {
+    if (favourites.has(photo.id)) favourites.delete(photo.id);
+    else favourites.set(photo.id, { id: photo.id, filename: photo.filename });
+    persistFavourites(); updateFavourites();
+    if (showFavourites && !favourites.size) galleryMessage.textContent = "No favourites chosen yet. Choose photos in the full gallery first.";
+  });
   const download = document.createElement("button");
   download.className = "download";
   download.type = "button";
   download.textContent = "Download original";
   download.addEventListener("click", () => downloadOriginal(photo, download));
-  details.append(filename, download);
+  details.append(filename, favourite, download);
   card.append(frame, details);
   photoGrid.append(card);
+  cards.set(photo.id, { card, button: favourite });
+  updateFavourites();
   queuedPhotos.set(frame, { photo, placeholder });
   if (photoObserver) photoObserver.observe(frame);
   else queueThumbnail(frame);
@@ -131,16 +200,19 @@ function queueThumbnail(frame) {
   const item = queuedPhotos.get(frame);
   if (!item) return;
   const { photo, placeholder } = item;
+  queuedPhotos.delete(frame);
+  const version = generation;
   assetQueue.push(async () => {
     try {
       placeholder.textContent = "Loading preview…";
       const blob = await fetchPhoto(photo, "thumbnail");
+      if (version !== generation) return;
       const image = frame.querySelector("img");
-      image.src = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob); previewUrls.add(url); image.src = url;
       image.hidden = false;
       placeholder.remove();
     } catch (error) {
-      placeholder.textContent = error.message || "Preview unavailable. Refresh to try again.";
+      if (version === generation) placeholder.textContent = error.message || "Preview unavailable. Refresh to try again.";
     }
   });
   pumpQueue();
@@ -158,17 +230,20 @@ function pumpQueue() {
 }
 
 async function fetchPhoto(photo, variant) {
+  const signal = requestsController.signal;
   const created = await readResponse(await fetch(`${RELAY}/guest/gallery/jobs`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ photo_id: photo.id, variant }),
+    signal,
   }));
   const job = await created.json();
   for (let attempt = 0; attempt < 400; attempt++) {
+    signal.throwIfAborted();
     if (attempt) await new Promise((resolve) => setTimeout(resolve, 1500));
     const statusResponse = await readResponse(await fetch(
       `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}`,
-      { headers: authHeaders() },
+      { headers: authHeaders(), signal },
     ));
     const status = (await statusResponse.json()).status;
     if (status === "failed" || status === "expired") {
@@ -177,7 +252,7 @@ async function fetchPhoto(photo, variant) {
     if (status !== "ready") continue;
     const fileResponse = await readResponse(await fetch(
       `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}/file`,
-      { headers: authHeaders() },
+      { headers: authHeaders(), signal },
     ));
     return fileResponse.blob();
   }
@@ -210,8 +285,16 @@ $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   loginMessage.textContent = "";
   if (!shareToken) {
-    loginMessage.textContent = "This gallery link is incomplete. Ask the photographer for a new link.";
-    return;
+    try {
+      const link = new URL($("#gallery-link").value);
+      if (![location.origin, "https://sm-photo-studio.vercel.app", "https://ai-photo-k5fu.vercel.app"].includes(link.origin)
+          || link.pathname !== "/gallery.html" || link.username || link.password || !/^[a-f0-9]{64}$/i.test(link.hash.slice(1))) throw new Error();
+      shareToken = link.hash.slice(1);
+      sessionStorage.setItem("photo-finder-gallery-token", shareToken);
+    } catch {
+      loginMessage.textContent = "Paste the complete private gallery link shared by your photographer.";
+      return;
+    }
   }
   loginButton.disabled = true;
   try {
@@ -234,6 +317,31 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 
 loadMoreButton.addEventListener("click", loadPage);
+favouriteFilter.addEventListener("click", () => {
+  showFavourites = !showFavourites;
+  if (showFavourites) {
+    for (const photo of favourites.values()) if (!cards.has(photo.id)) addPhoto(photo);
+    galleryMessage.textContent = favourites.size ? `${favourites.size} photos chosen for editing.` : "No favourites chosen yet. Choose photos in the full gallery first.";
+  }
+  updateFavourites();
+});
+exportButton.addEventListener("click", async () => {
+  if (exportButton.disabled) return;
+  exporting = true; updateFavourites();
+  try {
+    // Recheck the private gallery before exporting a restored selection.
+    await readResponse(await fetch(`${RELAY}/guest/gallery/photos?limit=1`, { headers: authHeaders(), signal: requestsController.signal, cache: "no-store" }));
+    if (!favourites.size) return;
+    const blob = createSelectionCsv([...favourites.values()], { eventId: galleryContext.event_id, eventName: galleryContext.event_name });
+    const url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url; link.download = "sm-photography-favourites.csv";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    galleryMessage.textContent = `CSV downloaded with ${favourites.size} chosen photos. Send it to your editor with the original photo folder.`;
+  } catch (error) { galleryMessage.textContent = error.message; }
+  finally { exporting = false; updateFavourites(); }
+});
+window.addEventListener("pagehide", resetAssets);
 
 if (sessionToken && shareToken) {
   startGallery().catch((error) => {

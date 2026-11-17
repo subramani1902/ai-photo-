@@ -1,9 +1,13 @@
+import { createSelectionCsv } from "./selection-csv.mjs";
+
 // All image requests carry a verified Firebase ID token; no tokens go in URLs.
 export function createClientGallery({ client, onClose, configuration } = {}) {
   const $ = selector => document.querySelector(selector);
   const section = $("#client-gallery"), grid = $("#client-photos"), message = $("#client-gallery-message");
   const more = $("#client-load-more"), zip = $("#download-event-selection");
+  const exportFavourites = $("#export-client-favourites");
   let base, event, after = 0, category = "all", generation = 0, busy = false;
+  let favouriteWrites = 0;
   const selected = new Map(), urls = new Set();
   let abort = new AbortController();
 
@@ -15,6 +19,7 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
     urls.clear(); selected.clear(); grid.replaceChildren();
     after = 0;
     zip.disabled = true;
+    exportFavourites.disabled = true;
   }
 
   function close() {
@@ -55,6 +60,8 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
   function updateSelection() {
     zip.disabled = !selected.size || busy;
     zip.textContent = selected.size ? "Download selected (" + selected.size + ") .zip" : "Download selected (.zip)";
+    exportFavourites.hidden = !event?.permissions.includes("favourite");
+    exportFavourites.disabled = !event || busy || favouriteWrites > 0;
   }
 
   async function render(photo, version) {
@@ -70,13 +77,15 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
       const setLabel = value => { favourite.textContent = value ? "♥ Favourite" : "♡ Favourite"; favourite.setAttribute("aria-pressed", String(value)); };
       setLabel(photo.favourite);
       favourite.addEventListener("click", async () => {
+        if (busy) return;
+        favouriteWrites++; updateSelection();
         favourite.disabled = true;
         try {
           await request(endpoint("/photos/" + photo.id + "/favourite"), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selected: !photo.favourite }) });
           photo.favourite = !photo.favourite; setLabel(photo.favourite);
           if (category === "favourites" && !photo.favourite) card.remove();
         } catch (error) { message.textContent = error.message; }
-        finally { favourite.disabled = false; }
+        finally { favourite.disabled = false; favouriteWrites--; updateSelection(); }
       });
       controls.append(favourite);
     }
@@ -165,6 +174,27 @@ export function createClientGallery({ client, onClose, configuration } = {}) {
     } catch (error) { message.textContent = error.message; }
     finally { busy = false; updateSelection(); }
   });
+  exportFavourites.addEventListener("click", async () => {
+    if (exportFavourites.disabled || !event) return;
+    busy = true; updateSelection(); message.textContent = "Preparing all your favourites for the editor…";
+    const version = generation, details = event;
+    try {
+      const photos = [];
+      let cursor = 0;
+      do {
+        const page = await (await request(endpoint("/photos?after=" + cursor + "&limit=100&category=favourites"))).json();
+        if (version !== generation) return;
+        photos.push(...page.photos);
+        if (photos.length > 10000 || (page.next_after !== null && page.next_after <= cursor)) throw new Error("The favourites list could not be loaded. Please try again.");
+        cursor = page.next_after;
+      } while (cursor !== null);
+      if (!photos.length) { message.textContent = "Choose at least one Favourite photo before downloading the editor CSV."; return; }
+      save(createSelectionCsv(photos, { eventId: details.event_id, eventName: details.event_name }), "event-" + details.event_id + "-favourites.csv");
+      message.textContent = "CSV downloaded with " + photos.length + " favourite photos. Send it to your editor with the original photo folder.";
+    } catch (error) { message.textContent = error.message; }
+    finally { if (version === generation) { busy = false; updateSelection(); } }
+  });
   window.addEventListener("pagehide", close);
   return { open, close };
 }
+

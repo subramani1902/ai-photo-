@@ -15,12 +15,20 @@ const pendingId = "30000000-0000-4000-8000-000000000002";
 const otherId = "30000000-0000-4000-8000-000000000003";
 const secret = "a".repeat(64);
 const tokenHash = Buffer.from(await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(secret))).toString("hex");
+const galleryId = "40000000-0000-4000-8000-000000000001";
 
-function fixture({ status = "processing", expired = false, active = true } = {}) {
+function fixture({ status = "processing", expired = false, active = true, galleryActive = true } = {}) {
   const tables = {
     photo_finder_jobs: [{ id: jobId, event_id: eventId, status, guest_token_hash: tokenHash,
       expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3600000).toISOString(), error_message: null }],
-    photo_finder_events: [{ id: eventId, active }],
+    photo_finder_events: [{ id: eventId, active, name: "Test event", current_folder: "Current folder" }],
+    photo_finder_gallery_sessions: [{ id: "session", gallery_id: galleryId, token_hash: tokenHash,
+      expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3600000).toISOString() }],
+    photo_finder_gallery_links: [{ id: galleryId, event_id: eventId, active: galleryActive,
+      expires_at: new Date(Date.now() + 3600000).toISOString() }],
+    photo_finder_gallery_photos: [{ event_id: eventId, photo_id: 11, filename: "a.jpg" },
+      { event_id: eventId, photo_id: 12, filename: "b.jpg" },
+      { event_id: "different-event", photo_id: 13, filename: "private-other-event.jpg" }],
     photo_finder_results: [
       { id: readyId, job_id: jobId, filename: "ready.jpg", similarity: 0.8, face_count: 1, uploaded: true, object_path: "private/ready" },
       { id: pendingId, job_id: jobId, filename: "pending.jpg", similarity: 0.9, face_count: 4, uploaded: false, object_path: "private/pending" },
@@ -35,7 +43,8 @@ function fixture({ status = "processing", expired = false, active = true } = {})
         select(value, config) { columns = value.split(","); options = config; return query; },
         eq(key, value) { rows = rows.filter(row => row[key] === value); return query; },
         gt(key, value) { rows = rows.filter(row => row[key] > value); return query; },
-        order(key, { ascending }) { rows.sort((a, b) => (a[key] - b[key]) * (ascending ? 1 : -1)); return query; },
+        order(key, { ascending = true } = {}) { rows.sort((a, b) => (a[key] - b[key]) * (ascending ? 1 : -1)); return query; },
+        limit(maximum) { rows = rows.slice(0, maximum); return query; },
         maybeSingle() { single = true; return query; },
         then(resolve, reject) {
           const data = rows.map(row => Object.fromEntries(columns.map(column => [column, row[column]])));
@@ -57,6 +66,11 @@ function fixture({ status = "processing", expired = false, active = true } = {})
   });
   return {
     downloads,
+    galleryRequest(token = secret) {
+      return handler(new Request("https://relay.example/functions/v1/relay/guest/gallery/photos?limit=1", {
+        headers: { "X-Gallery-Session": token },
+      }));
+    },
     request(path = "", token = secret) {
       return handler(new Request(`https://relay.example/functions/v1/relay/guest/jobs/${jobId}${path}`, {
         headers: { "X-Job-Token": token },
@@ -119,4 +133,24 @@ test("completed jobs keep the existing photo response contract", async () => {
   assert.equal(body.photos_detected, 1);
   assert.equal(body.photos.length, 1);
   assert.equal((await api.request(`/photos/${readyId}`)).status, 200);
+});
+
+test("full-gallery CSV context and count stay within the authenticated event", async () => {
+  const response = await fixture().galleryRequest();
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.gallery_id, galleryId);
+  assert.equal(body.event_id, eventId);
+  assert.equal(body.event_name, "Current folder");
+  assert.equal(body.photo_count, 2);
+  assert.equal(body.next_cursor, "11");
+  assert.deepEqual(body.photos, [{ id: 11, filename: "a.jpg" }]);
+  assert.equal(JSON.stringify(body).includes("private-other-event"), false);
+});
+
+test("full-gallery metadata and CSV context require a live private session", async () => {
+  for (const [settings, token, expected] of [[{}, "", 401], [{}, "b".repeat(64), 401],
+    [{ expired: true }, secret, 401], [{ galleryActive: false }, secret, 403], [{ active: false }, secret, 403]]) {
+    assert.equal((await fixture(settings).galleryRequest(token)).status, expected);
+  }
 });

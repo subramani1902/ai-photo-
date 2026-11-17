@@ -2,6 +2,8 @@
 
 import argparse
 from getpass import getpass
+import json
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -91,6 +93,11 @@ def main():
     parser.add_argument("--secrets-file", type=Path, default=Path(".env.relay"))
     parser.add_argument("--expires-days", type=int, default=30)
     parser.add_argument("--wait-seconds", type=int, default=180)
+    parser.add_argument("--allow-indexing", action="store_true",
+                        help="Open an album that gains new photos as indexing continues")
+    parser.add_argument("--generate-password", action="store_true",
+                        help="Generate a strong gallery password and save it to --output")
+    parser.add_argument("--output", type=Path, help="Save private gallery details under the ignored .secrets folder")
     parser.add_argument("--revoke-id", help="Revoke an existing gallery ID instead of creating one")
     args = parser.parse_args()
 
@@ -106,6 +113,13 @@ def main():
         parser.error("--wait-seconds must be between 1 and 900.")
     if not args.revoke_id and not 1 <= args.expires_days <= 90:
         parser.error("--expires-days must be between 1 and 90.")
+    if args.generate_password and not args.output:
+        parser.error("--generate-password requires --output so the password is saved privately.")
+    if args.output:
+        destination = args.output.resolve()
+        private_root = (Path.cwd() / ".secrets").resolve()
+        if not destination.is_relative_to(private_root) or destination.exists():
+            parser.error("Choose a new output file inside this repository's ignored .secrets folder.")
 
     if args.revoke_id:
         try:
@@ -133,18 +147,27 @@ def main():
     event_name, expected_paths, tracked_paths, expected_manifest = local_manifest(args.event_id)
     pending = expected_paths - tracked_paths
     stale = tracked_paths - expected_paths
-    if pending or stale:
+    if stale or (pending and not args.allow_indexing):
         print(
             f"Gallery not created: the importer has not finished syncing "
             f"({len(pending)} files pending, {len(stale)} stale). Keep it running and retry.",
             file=sys.stderr,
         )
         return 1
+    if pending:
+        print(f"Opening an album while indexing continues: {len(expected_paths & tracked_paths)} ready, {len(pending)} pending.")
 
     deadline = time.monotonic() + args.wait_seconds
     while True:
         remote_photos = remote_manifest(args.relay_url, headers, event_name)
-        if remote_photos == expected_manifest:
+        if args.allow_indexing and remote_photos:
+            # The importer may add photos between pages. Compare against a
+            # fresh local snapshot without requiring unfinished AI work.
+            _, _, _, current_manifest = local_manifest(args.event_id)
+            current_by_id = {row["photo_id"]: row["filename"] for row in current_manifest}
+            if all(current_by_id.get(row["photo_id"]) == row["filename"] for row in remote_photos):
+                break
+        elif remote_photos == expected_manifest:
             break
         if time.monotonic() >= deadline:
             raise RuntimeError(
@@ -153,10 +176,10 @@ def main():
             )
         time.sleep(10)
 
-    password = getpass("Set a gallery password (12-128 characters): ")
+    password = secrets.token_urlsafe(24) if args.generate_password else getpass("Set a gallery password (12-128 characters): ")
     if len(password) < 12 or len(password) > 128:
         parser.error("Gallery password must be 12-128 characters.")
-    if password != getpass("Re-enter the gallery password: "):
+    if not args.generate_password and password != getpass("Re-enter the gallery password: "):
         parser.error("Passwords do not match.")
 
     response = requests.post(
@@ -169,6 +192,14 @@ def main():
     response.raise_for_status()
     result = response.json()
     link = f"{args.site_url.rstrip('/')}/gallery.html#{result['token']}"
+    if args.output:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("x", encoding="utf-8") as output:
+            json.dump({"event_id": args.event_id, "gallery_id": result["gallery_id"],
+                       "url": link, "password": password, "expires_at": result["expires_at"],
+                       "photos_expected_at_creation": len(expected_paths),
+                       "photos_ready_at_creation": len(remote_photos)}, output, indent=2)
+        print(f"Private gallery details saved to: {destination}")
     print(f"\nGallery link: {link}")
     print(f"Gallery ID (keep this to revoke): {result['gallery_id']}")
     print(f"Expires: {result['expires_at']}")

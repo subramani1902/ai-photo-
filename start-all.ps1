@@ -63,6 +63,7 @@ $eventPattern = '--event-id(?:=|\s+)' + $EventId + '(?:\s|$)'
 $importerPattern = 'app\.services\.camera_importer.*' + $eventPattern
 $backendPattern = 'uvicorn\s+app\.main:app'
 $relayPattern = 'app\.services\.relay_worker.*' + $eventPattern
+$galleryPattern = 'app\.services\.gallery_worker.*' + $eventPattern
 $staleImporters = @($projectProcesses | Where-Object {
     $_.CommandLine -match $importerPattern -and
     $_.CommandLine.IndexOf($Folder, [StringComparison]::OrdinalIgnoreCase) -lt 0
@@ -152,6 +153,7 @@ function Wait-BackendPortFree {
 Start-ServiceIfMissing 'backend' $backendPattern @('-u','-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000')
 Start-ServiceIfMissing 'importer' $importerPattern @('-u','-m','app.services.camera_importer','--folder',('"{0}"' -f $Folder),'--event-id',"$EventId")
 Start-ServiceIfMissing 'relay' $relayPattern @('-u','-m','app.services.relay_worker','--event-id',"$EventId",'--secrets-file',('"{0}"' -f $SecretsFile),'--relay-url',$RelayUrl)
+Start-ServiceIfMissing 'gallery' $galleryPattern @('-u','-m','app.services.gallery_worker','--event-id',"$EventId",'--secrets-file',('"{0}"' -f $SecretsFile),'--relay-url',$RelayUrl)
 
 if (-not (Wait-BackendHealthy)) { throw "The backend did not become healthy. Check logs in $logFolder" }
 Write-Host 'Backend health check passed.'
@@ -189,6 +191,7 @@ if ($Monitor) {
             }
             Start-ServiceIfMissing 'importer' $importerPattern @('-u','-m','app.services.camera_importer','--folder',('"{0}"' -f $Folder),'--event-id',"$EventId")
             Start-ServiceIfMissing 'relay' $relayPattern @('-u','-m','app.services.relay_worker','--event-id',"$EventId",'--secrets-file',('"{0}"' -f $SecretsFile),'--relay-url',$RelayUrl)
+            Start-ServiceIfMissing 'gallery' $galleryPattern @('-u','-m','app.services.gallery_worker','--event-id',"$EventId",'--secrets-file',('"{0}"' -f $SecretsFile),'--relay-url',$RelayUrl)
         } catch {
             Write-Warning "Service recovery check failed ($($_.Exception.GetType().Name)); retrying."
         }
