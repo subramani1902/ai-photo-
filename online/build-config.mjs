@@ -1,8 +1,6 @@
 // Explicit allowlist: this output is public and must never contain Admin credentials.
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 export function buildPublicConfiguration(env = process.env) {
   const enabled = (env.FIREBASE_ENABLED ?? "false").trim().toLowerCase();
@@ -35,7 +33,8 @@ export function buildPublicConfiguration(env = process.env) {
   return configuration;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// Canonical paths also handle Windows drive casing and alternate path separators.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
   try {
     const configuration = buildPublicConfiguration();
     writeFileSync(fileURLToPath(new URL("./firebase-config.js", import.meta.url)),

@@ -58,6 +58,14 @@ class FirebaseConfigurationTests(unittest.TestCase):
             backend_main.initialize_firebase()
         initialize.assert_called_once_with()
 
+    def test_firebase_startup_configuration_failure_preserves_local_services(self):
+        with patch.object(backend_main, "get_firebase_settings", return_value=FirebaseSettings(True, PROJECT)), \
+                patch.object(backend_main, "get_firebase_app", side_effect=FirebaseConfigurationError("credential unavailable")), \
+                self.assertLogs("app.main", level="WARNING") as log:
+            backend_main.initialize_firebase()
+        self.assertIn("existing local services remain active", log.output[0])
+        self.assertNotIn("credential unavailable", log.output[0])
+
     def test_disabled_configuration_does_not_require_project_credentials_or_sdk(self):
         settings = FirebaseSettings.from_env({"FIREBASE_ENABLED": "false", "FIREBASE_PROJECT_ID": "invalid",
                                               "FIREBASE_CREDENTIALS_FILE": "missing.json"})

@@ -66,7 +66,10 @@ against the current watched folder. QR links remain available for specific
 events. After finding the matches, the worker publishes their metadata before
 uploading any image bytes. The UI can therefore show the full Photos Matched
 count immediately, while delivery continues in the background. The importer
-keeps the original photos locally.
+keeps local copies as a fallback, but photo retrieval reads from
+`G:\Aathif & sahana\aathif and sahana` first. The laptop relay transfers
+authorized matches to private temporary storage for guest downloads; keep the
+external drive connected while searches are being processed.
 Search results can be filtered into Candid (one detected face) and Group (two
 or more detected faces). Photos without a detected face are not candidates for
 selfie matching.

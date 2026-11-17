@@ -22,6 +22,7 @@ from app.database.db import get_db
 from app.database.models import Event, Face, Photo, User
 from app.dependencies.auth import get_current_admin
 from app.services.persistent_face_index import PersistentFaceIndex
+from app.services.photo_sources import resolve_photo_file
 
 
 # --------------------------------------------------
@@ -466,24 +467,14 @@ def get_event_photo(
     # VALIDATE IMAGE PATH
     # ------------------------------------------
 
-    image_path = Path(
-        photo.file_path
-    ).resolve()
-
-    event_root = (
-        Path("storage/events") /
-        event.event_name
-    ).resolve()
-
-    if not image_path.is_relative_to(event_root):
-
+    try:
+        image_path = resolve_photo_file(db, event, photo)
+    except ValueError:
         raise HTTPException(
             status_code=403,
             detail="Photo access denied."
         )
-
-    if not image_path.is_file():
-
+    except (OSError, RuntimeError):
         raise HTTPException(
             status_code=404,
             detail="Image file not found."

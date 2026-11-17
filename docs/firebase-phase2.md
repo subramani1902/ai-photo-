@@ -1,9 +1,14 @@
 # Phase 2: optional Firebase initialization and authentication
 
 The selected Firebase project is **smphotography-f8c83** (project number
-271167879363). Firebase is disabled by default. This phase does not migrate the
-relay, modify the face engine/index, change the website layout, deploy cloud
-resources, or change existing login/QR behaviour.
+271167879363). Email/password Authentication is enabled. The **SM Photography
+Web** app is registered as `1:271167879363:web:2a0cf82a1268bc905a4a76`.
+The Firestore **Standard** `(default)` database is provisioned in **Mumbai
+(`asia-south1`)**, with deny-all client rules deployed and verified.
+
+Firebase is enabled in the ignored local `.env`; `.env.example` remains disabled
+for fresh installations. This phase keeps the existing Supabase relay, local
+face engine/index, camera importer, original-photo storage and event/QR workflows.
 
 ## Current boundaries
 
@@ -20,10 +25,20 @@ resources, or change existing login/QR behaviour.
 - Existing `/api/auth/*`, event, camera-import, search, guest QR and Supabase
   endpoints continue to use their existing contracts. A Firebase token does not
   grant access to the old administrator endpoints in this phase.
-- `online/firebase-client.js` is a dormant helper for later integration. It uses
-  named client/admin contexts and memory-only authentication persistence.
+- `online/account.html` provides Email/password sign-in, sign-out and password
+  reset, using the existing typography, colours and card styling. The contact
+  menu links to it. `online/firebase-client.js` uses named client/admin contexts
+  and memory-only authentication persistence. Signing in does not grant gallery
+  or administrator permissions automatically.
 - `online/server/` contains server-only helpers for the metadata API in Phase 3.
-  There are no new Vercel API functions or changes to the current deployment settings.
+  There are no new Vercel API functions. `online/vercel.json` runs the public
+  configuration generator at build time; configure the selected project's public
+  web values as Vercel environment variables before deploying the sign-in page.
+- Firestore rules deny direct reads/writes for everyone, including authenticated
+  browsers. There are no client collections yet. Admin SDK access uses server
+  IAM and must also enforce the API's explicit authentication and authorization.
+- Firebase startup configuration failures are logged without secret details;
+  local/Supabase services stay available and Firebase endpoints fail closed.
 
 ## Configure the actual project securely
 
@@ -46,19 +61,20 @@ as a server-only environment variable instead of a file. Never put this JSON in
 a browser configuration, `NEXT_PUBLIC_*` variable, or the static website.
 Explicit service-account files/JSON must belong to the configured project.
 
-The supplied service-account key for **smphotography-f680c** does not match the
-selected project and must not be configured here. No key has been copied or
-activated. Configure the matching key securely when it is available.
+The matching service-account file supplied for **smphotography-f8c83** is
+configured by absolute path in the ignored root `.env`. It remains outside the
+repository and the static website. The earlier **smphotography-f680c** key is not
+used. Do not copy either key into `online/`, source control, or public configuration.
 
-Firebase web configuration is intentionally incomplete until the actual values
-are supplied. There are no invented API keys, bucket names, auth domains, UIDs,
-or web-app IDs in the application configuration.
+The actual public configuration was retrieved from the registered Firebase web
+app, saved in the ignored root `.env`, and generated into the ignored
+`online/firebase-config.js`. Storage is not configured by this phase: a bucket
+name appearing in Firebase's web configuration does not prove it is provisioned.
+No Firebase users have been automatically created or linked to local accounts.
 
-The Firebase Python dependency is pinned in `requirements.txt`. During Phase 2,
-testing uses an isolated `.phase2-deps/python` directory to avoid changing the
-running importer environment. Install the updated requirements into the intended
-service environment when preparing activation; no service restart is performed
-by these modules.
+The Firebase Python dependency is pinned in `requirements.txt` and installed in
+the repository virtual environment. The installation retained the previously
+installed dependency versions. Node dependencies are pinned by `online/package-lock.json`.
 
 ## Explicitly link an administrator
 
@@ -121,13 +137,15 @@ node --env-file=.env online/build-config.mjs
 
 The generator copies only explicitly allowlisted public web-app values. Disabled
 mode generates `{ "enabled": false }`; enabled mode rejects incomplete values.
-The existing page does not load this generated file yet. The current Vercel
-build/install settings remain unchanged; production integration belongs to Phase 3.
+Only the new account page loads this generated configuration. The existing guest
+page keeps its Supabase search transport. Vercel's build command generates the
+file from the deployment's public Firebase environment values; it must never
+receive the service-account JSON as a public value. No Vercel production release
+is made by this setup step.
 
 ## Offline tests and emulator isolation
 
 ```powershell
-$env:PYTHONPATH = Join-Path (Get-Location) '.phase2-deps/python'
 .\venv\Scripts\python.exe -B -m unittest discover -s tests -v
 npm.cmd --prefix online test
 ```
@@ -151,10 +169,48 @@ Set `FIREBASE_ENABLED=false` and restart only a service that was deliberately
 activated for Firebase. Existing Supabase and local authentication need no data
 rollback. An unused additive identity table may remain in place.
 
-Live sign-in, IAM permissions, selected-project credential verification and the
-Firebase web app remain unverified until the matching credentials/configuration
-are available. No Supabase decommissioning or production deployment is part of
-Phase 2.
+Verified live setup:
+
+- The credential and web app belong to `smphotography-f8c83`.
+- Email/password is enabled, with password required.
+- Firestore is Standard, native mode, `(default)`, `asia-south1`.
+- Server-side create/read/delete passed with a temporary diagnostic document
+  containing no user/photo data; the document was removed.
+- The deployed rules match `firestore.rules`; an unauthenticated REST read
+  returns `403 PERMISSION_DENIED`.
+- The actual browser Auth SDK loads and the sign-in page renders correctly.
+
+Successful sign-in with a real user and the existing administrator UID binding
+still require that user's account. Do not infer a UID from an email address.
+The optional test emulator uses separate `demo-` projects and no production key.
+
+For deployment commands, authenticate the Firebase CLI as the project owner.
+The runtime service-account key has data-access permissions, but cannot create
+databases, enable APIs or publish rules. Provisioning does not require expanding
+the runtime key's privileges:
+
+```powershell
+npx -y firebase-tools@latest deploy --only auth --project smphotography-f8c83
+npx -y firebase-tools@latest deploy --only firestore --project smphotography-f8c83
+```
+
+Keep the Windows service supervisor running for backend/importer/worker recovery.
+Firebase manages Auth/Firestore availability; local face matching and HDD access
+require this PC, its external disk and its internet connection to remain online.
+The supervisor in `start-all.ps1` checks every 15 seconds. Use its existing
+event/folder settings when installing or running it; do not start a second importer.
+
+Full guest-search and private-gallery cutover remains separate: temporary Firebase
+Storage, a permanent authenticated Cloudflare photo API, relay adaptation, private
+gallery APIs/UI, expiry/rate limits and end-to-end matching/download tests are
+still required. Keep Supabase enabled until those checks pass.
+
+The supplied Cloudflare Account ID and Zone ID currently identify a pending zone
+for `sm-photo-studio.vercel.app`, a Vercel-provided hostname. A permanent tunnel
+needs a domain whose DNS the user controls. `smphotography.in` is a proposed name,
+not yet purchased. The website can remain on Vercel; a future owned-domain API
+hostname must be configured from verified DNS/tunnel values. No tunnel or DNS
+change has been made.
 
 References: [Admin setup](https://firebase.google.com/docs/admin/setup),
 [ID-token verification](https://firebase.google.com/docs/auth/admin/verify-id-tokens),

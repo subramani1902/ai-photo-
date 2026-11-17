@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, rmdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildPublicConfiguration } from "../build-config.mjs";
 import { createFirebaseClient } from "../firebase-client.js";
 import { createFirebaseAdminRuntime, readServerSettings } from "../server/firebase-admin.js";
@@ -108,7 +112,11 @@ function browserSdk() {
     getAuth: () => auth, inMemoryPersistence: "memory",
     async setPersistence(_auth, persistence) { events.push(["persistence", persistence]); },
     async signInWithCustomToken(_auth, token) { events.push(["sign-in", token]); auth.currentUser = { getIdToken: async refresh => { events.push(["id-token", refresh]); return "offline-id-token"; } }; },
-    async signInWithEmailAndPassword(_auth, email, password) { events.push(["password", email, password]); },
+    async signInWithEmailAndPassword(_auth, email, password) {
+      events.push(["password", email, password]);
+      auth.currentUser = { uid: "account-test-uid", email, emailVerified: true, refreshToken: "PRIVATE-TOKEN" };
+    },
+    async sendPasswordResetEmail(_auth, email) { events.push(["password-reset", email]); },
     async signOut() { auth.currentUser = null; },
   };
 }
@@ -141,6 +149,43 @@ test("browser admin and gallery authentication have separate app contexts", asyn
   await admin.signInWithPassword("owner@example.test", "offline-test-password");
   await client.signInWithCustomToken("offline-custom-token");
   assert.deepEqual(sdk.apps.map(app => app.name), [`photo-finder-admin-${projectId}`, `photo-finder-client-${projectId}`]);
+});
+
+test("account helpers expose only identity and delegate password reset to Firebase", async () => {
+  const sdk = browserSdk();
+  const client = createFirebaseClient({ configuration: buildPublicConfiguration(publicEnv()), context: "admin", loadSdk: async () => sdk });
+  assert.equal(await client.getCurrentUser(), null);
+  await client.signInWithPassword("owner@example.test", "offline-test-password");
+  const user = await client.getCurrentUser();
+  assert.deepEqual(user, { uid: "account-test-uid", email: "owner@example.test", emailVerified: true });
+  assert.equal(Object.isFrozen(user), true);
+  assert.equal(JSON.stringify(user).includes("PRIVATE-TOKEN"), false);
+  await client.sendPasswordReset("owner@example.test");
+  assert.deepEqual(sdk.events.at(-1), ["password-reset", "owner@example.test"]);
+  await client.signOut();
+  assert.equal(await client.getCurrentUser(), null);
+});
+
+test("configuration generator runs as a CLI on canonical Windows paths", () => {
+  const directory = mkdtempSync(join(fileURLToPath(new URL("../node_modules/", import.meta.url)), ".photo-finder-config-"));
+  try {
+    const script = join(directory, "build-config.mjs");
+    copyFileSync(new URL("../build-config.mjs", import.meta.url), script);
+    const entry = process.platform === "win32" ? script.replaceAll("\\", "/") : script;
+    const stdout = execFileSync(process.execPath, [entry], { cwd: directory, env: {
+      ...process.env, ...publicEnv(), FIREBASE_EMULATOR_MODE: "false",
+      FIREBASE_AUTH_EMULATOR_HOST: "", FIRESTORE_EMULATOR_HOST: "", STORAGE_EMULATOR_HOST: "", FIREBASE_STORAGE_EMULATOR_HOST: "",
+      FIREBASE_ADMIN_CREDENTIALS_JSON: "PRIVATE-SERVER-CREDENTIAL",
+    }, encoding: "utf8" });
+    assert.match(stdout, /configuration generated \(enabled\)/);
+    const generated = readFileSync(join(directory, "firebase-config.js"), "utf8");
+    assert.match(generated, /"enabled": true/);
+    assert.match(generated, /unit-test-project/);
+    assert.equal(generated.includes("PRIVATE-SERVER-CREDENTIAL"), false);
+  } finally {
+    for (const name of ["build-config.mjs", "firebase-config.js"]) rmSync(join(directory, name), { force: true });
+    rmdirSync(directory);
+  }
 });
 
 test("browser emulator configuration cannot run on a production page", async () => {

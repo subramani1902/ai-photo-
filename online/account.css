@@ -1,0 +1,13 @@
+.account-intro{max-width:560px;margin-bottom:60px}
+.account-field{display:block;margin-top:24px;color:var(--ink);font-size:14px;font-weight:600}
+.account-field input{display:block;width:100%;margin-top:8px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--white);color:var(--ink);font-weight:400}
+.account-field input:focus-visible{outline:3px solid #c89157;outline-offset:2px}
+.account-field input:disabled{background:#f4f6f1}
+#sign-in{margin-top:28px}
+.account-reset{display:block;margin:20px auto 0}
+.account-message{margin-top:18px;color:var(--muted);font-size:14px;line-height:1.6;overflow-wrap:anywhere}
+.account-message:empty{display:none}
+.account-privacy{line-height:1.7;margin-top:22px}
+#account-identity{overflow-wrap:anywhere}
+#sign-out{margin-top:24px}
+@media(max-width:600px){.account-intro{margin-top:36px}.topbar>.text-button{font-size:12px;max-width:130px;text-align:right}}

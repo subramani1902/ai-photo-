@@ -63,6 +63,10 @@ class RemoteMatchingTests(unittest.TestCase):
                 with (
                     patch("app.services.remote_matching.PersistentFaceIndex", return_value=index),
                     patch("app.services.remote_matching.SessionLocal", return_value=db),
+                    patch(
+                        "app.services.remote_matching.resolve_photo_file",
+                        side_effect=lambda _db, _event, photo: Path(photo.file_path),
+                    ),
                 ):
                     matches = find_event_matches(3, selfie_path, engine=engine)
 

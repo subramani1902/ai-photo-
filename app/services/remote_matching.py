@@ -4,6 +4,7 @@ This module does not upload images or expose local file paths to guests.
 The relay worker is responsible for authorizing requests and transferring files.
 """
 
+import logging
 from pathlib import Path
 
 from sqlalchemy import func
@@ -12,6 +13,10 @@ from app.database.db import SessionLocal
 from app.database.models import Event, Face, Photo
 from app.ai.face_engine import FaceEngine
 from app.services.persistent_face_index import PersistentFaceIndex
+from app.services.photo_sources import resolve_photo_file
+
+
+LOG = logging.getLogger(__name__)
 
 
 def find_event_matches(event_id, selfie_path, *, engine=None, min_similarity=0.60):
@@ -33,7 +38,6 @@ def find_event_matches(event_id, selfie_path, *, engine=None, min_similarity=0.6
             raise ValueError("Event not found.")
         if not event.event_name or Path(event.event_name).name != event.event_name or event.event_name in {".", ".."}:
             raise ValueError("Invalid event folder name.")
-        root = (Path("storage/events") / event.event_name).resolve()
         eligible_matches = [
             match for match in matches
             if match["similarity"] >= min_similarity
@@ -58,8 +62,11 @@ def find_event_matches(event_id, selfie_path, *, engine=None, min_similarity=0.6
             photo = records_by_face_id.get(match["face_id"])
             if photo is None:
                 continue
-            path = Path(photo.file_path).resolve()
-            if not path.is_relative_to(root) or not path.is_file():
+            try:
+                path = resolve_photo_file(db, event, photo)
+            except (OSError, RuntimeError, ValueError) as exc:
+                LOG.warning("Skipping photo %s because its image is unavailable (%s)",
+                            photo.id, type(exc).__name__)
                 continue
             if photo.id not in results:
                 results[photo.id] = {

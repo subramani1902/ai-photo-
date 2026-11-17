@@ -9,12 +9,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database.db import Base
 from app.database.models import Event, Face, Photo
-from app.services.person_groups import PersonFace, PersonGroup, PhotoSource
+from app.services.person_groups import EventSourceFolder, PersonFace, PersonGroup, PhotoSource
 from app.services.photo_sources import (
     assign_photo_source,
     folder_is_processed,
     normalize_source_path,
     reconcile_photo_sources,
+    resolve_photo_file,
     remove_source_files,
     source_paths_in,
 )
@@ -41,6 +42,37 @@ class PhotoSourceTests(unittest.TestCase):
             normalize_source_path("../outside.jpg")
         with self.assertRaises(ValueError):
             normalize_source_path("C:/outside.jpg")
+
+    def test_photo_retrieval_prefers_external_source_and_falls_back_to_copy(self):
+        source_root = Path("external")
+        event_root = Path("storage/events/wedding/originals")
+        source_root.mkdir()
+        event_root.mkdir(parents=True)
+        external_photo = source_root / "photo.jpg"
+        local_photo = event_root / "photo.jpg"
+        external_photo.write_bytes(b"external")
+        local_photo.write_bytes(b"local")
+        event = Event(id=1, event_name="wedding")
+        photo = Photo(id=1, event_id=1, filename="photo.jpg", file_path=str(local_photo))
+        self.session.add_all([
+            event,
+            photo,
+            EventSourceFolder(event_id=1, folder_path=str(source_root.resolve())),
+            PhotoSource(event_id=1, relative_path="photo.jpg", photo_id=1, managed=True),
+        ])
+        self.session.commit()
+
+        self.assertEqual(resolve_photo_file(self.session, event, photo), external_photo.resolve())
+
+        external_photo.unlink()
+        with self.assertLogs("app.services.photo_sources", level="WARNING"):
+            self.assertEqual(resolve_photo_file(self.session, event, photo), local_photo.resolve())
+
+        source_folder = self.session.query(EventSourceFolder).filter_by(event_id=1).one()
+        source_folder.folder_path = str((Path("missing-drive") / "event").resolve())
+        self.session.commit()
+        with self.assertLogs("app.services.photo_sources", level="WARNING"):
+            self.assertEqual(resolve_photo_file(self.session, event, photo), local_photo.resolve())
 
     def test_source_manifest_lists_nested_images_and_rejects_missing_folder(self):
         root = Path("event")

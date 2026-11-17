@@ -104,6 +104,7 @@ class RelayWorker:
         from app.database.db import SessionLocal
         from app.database.models import Event, Photo
         from app.services.person_groups import EventSourceFolder, init_person_groups
+        from app.services.photo_sources import resolve_photo_file
 
         init_person_groups()
         with SessionLocal() as db:
@@ -119,9 +120,9 @@ class RelayWorker:
                 raise ValueError(
                     f"No watched folder is registered for local event {self.event_id}."
                 )
-            folder_path = Path(source_folder.folder_path).resolve(strict=True)
+            folder_path = Path(source_folder.folder_path).resolve()
             if not folder_path.is_dir():
-                raise ValueError("The registered watched folder is unavailable.")
+                LOG.warning("External photo folder is unavailable; using local copies where possible")
             folder_name = folder_path.name
             if not folder_name or folder_name in {".", ".."}:
                 raise ValueError("Invalid watched folder name.")
@@ -136,7 +137,14 @@ class RelayWorker:
                 .limit(SHOWCASE_PHOTO_COUNT)
                 .all()
             )
-            photo_rows = [(photo.id, photo.filename, photo.file_path) for photo in photos]
+            photo_rows = []
+            for photo in photos:
+                try:
+                    photo_path = resolve_photo_file(db, event, photo)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    LOG.warning("Skipping showcase photo %s (%s)", photo.id, type(exc).__name__)
+                    continue
+                photo_rows.append((photo.id, photo.filename, photo_path))
 
         current = self.request("GET", "/worker/showcase").json()
         if current.get("event_name") != event_name:
@@ -152,7 +160,8 @@ class RelayWorker:
                     continue
                 try:
                     source_path = Path(file_path).resolve(strict=True)
-                    source_path.relative_to(event_root)
+                    if not source_path.is_relative_to(folder_path) and not source_path.is_relative_to(event_root):
+                        raise ValueError("Photo path is outside approved storage.")
                     preview_path = prepare_photo_for_showcase(
                         source_path,
                         Path(directory) / f"{photo_id}.webp"

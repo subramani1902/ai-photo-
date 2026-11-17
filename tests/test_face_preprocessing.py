@@ -112,6 +112,7 @@ class FacePreprocessingTests(unittest.TestCase):
 
         with patch("app.services.person_groups.init_person_groups"), \
                 patch("app.database.db.SessionLocal", return_value=db), \
+                patch("app.services.photo_sources.resolve_photo_file", side_effect=lambda _db, _event, photo: Path(photo.file_path)), \
                 patch.object(worker, "request", return_value=current) as request:
             worker.sync_showcase()
 

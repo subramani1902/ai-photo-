@@ -45,6 +45,7 @@ from app.core.config import (
 from app.core.security import decode_access_token
 from app.ai.face_engine import FaceEngine
 from app.services.persistent_face_index import PersistentFaceIndex
+from app.services.photo_sources import resolve_photo_file
 
 
 router = APIRouter(tags=["Guest Photo Finder"])
@@ -594,9 +595,9 @@ def get_guest_photo(
     event = db.query(Event).filter(Event.id == guest_access.event_id).first()
     if photo is None or event is None:
         raise HTTPException(status_code=404, detail="Photo not found.")
-    path = Path(photo.file_path).resolve()
-    root = (Path("storage/events") / event.event_name).resolve()
-    if not path.is_relative_to(root) or not path.is_file():
+    try:
+        path = resolve_photo_file(db, event, photo)
+    except (OSError, RuntimeError, ValueError):
         raise HTTPException(status_code=404, detail="Photo not found.")
     return FileResponse(path, filename=photo.filename,
                         content_disposition_type="attachment" if download else "inline",

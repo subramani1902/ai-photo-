@@ -83,7 +83,28 @@ function Start-ServiceIfMissing {
     param([string]$Name, [string]$Pattern, [string[]]$Arguments)
     $currentProcesses = Get-ProjectPythonProcesses
     $existing = @($currentProcesses | Where-Object { $_.CommandLine -match $Pattern })
-    if ($existing.Count) {
+    if ($Name -eq 'backend') {
+        if (Test-BackendHealth) {
+            Write-Host 'backend is already healthy.'
+            return
+        }
+        if ($existing.Count -and (Wait-BackendHealthy)) {
+            Write-Host 'backend finished starting and is healthy.'
+            return
+        }
+        if ($existing.Count) {
+            Stop-ProjectService $Pattern
+            if (-not (Wait-BackendPortFree)) {
+                throw 'Port 8000 is still occupied after stopping the project backend.'
+            }
+        } else {
+            $listener = Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($listener) {
+                throw "Port 8000 is already in use by PID $($listener.OwningProcess); backend was not started."
+            }
+        }
+    } elseif ($existing.Count) {
         Write-Host "$Name is already running."
         return
     }
@@ -114,6 +135,16 @@ function Wait-BackendHealthy {
     for ($attempt = 0; $attempt -lt 15; $attempt++) {
         if (Test-BackendHealth) { return $true }
         Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+function Wait-BackendPortFree {
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $listener = Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if (-not $listener) { return $true }
+        Start-Sleep -Seconds 1
     }
     return $false
 }
@@ -153,7 +184,6 @@ if ($Monitor) {
         try {
             if (-not (Test-BackendHealth)) {
                 Write-Warning 'Backend health check failed; restarting the backend.'
-                Stop-ProjectService $backendPattern
                 Start-ServiceIfMissing 'backend' $backendPattern @('-u','-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000')
                 if (-not (Wait-BackendHealthy)) { throw 'Backend did not recover.' }
             }

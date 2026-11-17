@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// Phase 2 data model: no client-readable collections or client writes exist yet.
+// Metadata access is server-only through the Admin SDK and explicit API checks.
+// Original photos, face embeddings and FAISS indexes remain on the Windows PC.
+// Future relay/gallery schemas need specific rules before direct client access.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

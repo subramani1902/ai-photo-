@@ -1,10 +1,12 @@
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
 from app.core.firebase import get_firebase_app
-from app.core.firebase_config import get_firebase_settings
+from app.core.firebase_config import FirebaseConfigurationError, get_firebase_settings
 from app.api.guest import router as guest_router
 from app.api.auth import router as auth_router
 from app.api.search import router as search_router
@@ -71,8 +73,15 @@ def initialize_person_groups():
 
 @app.on_event("startup")
 def initialize_firebase():
-    if get_firebase_settings().enabled:
-        get_firebase_app()
+    try:
+        if get_firebase_settings().enabled:
+            get_firebase_app()
+    except FirebaseConfigurationError:
+        # Firebase endpoints still fail closed. Local search/import and Supabase
+        # must remain available if the optional credential file is unavailable.
+        logging.getLogger(__name__).warning(
+            "Firebase initialization is unavailable; existing local services remain active."
+        )
 
 
 # --------------------------------------------------

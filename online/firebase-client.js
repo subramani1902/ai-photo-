@@ -1,4 +1,4 @@
-// Additive browser helper. The existing page does not load this until a later phase.
+// Browser authentication shared by account pages; guest photo search stays independent.
 const SDK_VERSION = "13.4.0";
 
 async function loadBrowserSdk() {
@@ -51,6 +51,16 @@ export function createFirebaseClient({ configuration, context = "client", loadSd
     async signInWithPassword(email, password) {
       const { auth, sdk } = await ready();
       await sdk.signInWithEmailAndPassword(auth, email, password);
+    },
+    async getCurrentUser() {
+      const { auth } = await ready();
+      if (typeof auth.authStateReady === "function") await auth.authStateReady();
+      const user = auth.currentUser;
+      return user ? Object.freeze({ uid: user.uid, email: user.email, emailVerified: user.emailVerified === true }) : null;
+    },
+    async sendPasswordReset(email) {
+      const { auth, sdk } = await ready();
+      await sdk.sendPasswordResetEmail(auth, email);
     },
     async getIdToken(forceRefresh = false) {
       const { auth } = await ready();

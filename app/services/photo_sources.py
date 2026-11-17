@@ -5,7 +5,7 @@ import os
 from pathlib import Path, PurePosixPath
 
 from app.database.models import Event, Face, Photo
-from app.services.person_groups import PersonFace, PersonGroup, PhotoSource
+from app.services.person_groups import EventSourceFolder, PersonFace, PersonGroup, PhotoSource
 
 LOG = logging.getLogger(__name__)
 
@@ -20,6 +20,50 @@ def normalize_source_path(value):
     if path.parts and ":" in path.parts[0]:
         raise ValueError("Invalid photo source path.")
     return path.as_posix()
+
+
+def resolve_photo_file(db, event, photo):
+    source_folder = db.query(EventSourceFolder).filter_by(event_id=event.id).one_or_none()
+    sources = (db.query(PhotoSource)
+               .filter_by(event_id=event.id, photo_id=photo.id)
+               .order_by(PhotoSource.id).all())
+    source_error = None
+
+    if source_folder and sources:
+        try:
+            source_root = Path(source_folder.folder_path).resolve(strict=True)
+            for source in sources:
+                try:
+                    relative_path = PurePosixPath(normalize_source_path(source.relative_path))
+                    source_path = source_root.joinpath(*relative_path.parts).resolve(strict=True)
+                    source_path.relative_to(source_root)
+                    if source_path.is_file():
+                        return source_path
+                    source_error = "FileUnavailable"
+                except (OSError, RuntimeError, ValueError) as exc:
+                    source_error = type(exc).__name__
+        except (OSError, RuntimeError) as exc:
+            source_error = type(exc).__name__
+
+    if (source_folder and sources) and source_error:
+        LOG.warning(
+            "Using local copy for photo %s because its external source is unavailable (%s)",
+            photo.id,
+            source_error,
+        )
+
+    event_name = event.event_name
+    if not event_name or Path(event_name).name != event_name or event_name in {".", ".."}:
+        raise ValueError("Invalid event folder name.")
+    event_root = (Path("storage/events") / event_name).resolve()
+    local_path = Path(photo.file_path).resolve()
+    try:
+        local_path.relative_to(event_root)
+    except ValueError:
+        raise ValueError("Photo path is outside event storage.") from None
+    if not local_path.is_file():
+        raise FileNotFoundError("Photo file is unavailable.")
+    return local_path
 
 
 def _delete_managed_photo(db, event_id, photo_id):
