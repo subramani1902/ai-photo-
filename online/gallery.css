@@ -70,6 +70,8 @@ button { font: inherit; cursor: pointer; }
 #login-button:disabled, .download:disabled { opacity: .55; cursor: wait; }
 .message { min-height: 1.5em; color: #8d3c32; font-size: 14px; }
 .availability { margin: 20px 0 24px; padding: 14px 16px; border-left: 3px solid var(--accent); background: #f0ede5; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.folder-sections { display: grid; gap: 36px; }
+.folder-section h2 { margin: 0 0 14px; font: 400 28px Georgia, "Times New Roman", serif; }
 .photo-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .photo-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
 .photo-frame { display: grid; min-height: 180px; place-items: center; overflow: hidden; background: #ebe8e0; color: var(--muted); font-size: 13px; }

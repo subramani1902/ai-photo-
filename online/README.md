@@ -45,6 +45,8 @@ as well. Apply
 [`20261114140000_follow_current_photo_folder.sql`](../supabase/migrations/20261114140000_follow_current_photo_folder.sql)
 and
 [`20261118120000_add_password_protected_galleries.sql`](../supabase/migrations/20261118120000_add_password_protected_galleries.sql),
+and
+[`20261118130000_add_gallery_source_paths.sql`](../supabase/migrations/20261118130000_add_gallery_source_paths.sql),
 then deploy the relay function. The laptop worker synchronizes up to three
 recent photos from the watched folder to the private bucket every minute. The
 public website shows only the folder most recently reported by a running

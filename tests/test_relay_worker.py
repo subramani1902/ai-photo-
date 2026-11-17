@@ -184,12 +184,16 @@ class RelayWorkerTests(unittest.TestCase):
     def test_gallery_manifest_batches_photos_and_marks_only_the_last_batch_complete(self):
         context = MagicMock()
         db = context.__enter__.return_value
-        event_query, photo_query = Mock(), Mock()
+        event_query, photo_query, source_query = Mock(), Mock(), Mock()
         event_query.filter_by.return_value.one_or_none.return_value = SimpleNamespace(event_name="Candid Test")
         photo_query.filter_by.return_value.order_by.return_value.all.return_value = [
             (1, "one.jpg"), (2, "two.jpg"), (3, "three.jpg"),
         ]
-        db.query.side_effect = [event_query, photo_query]
+        source_query.filter_by.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(photo_id=1, relative_path="Wedding/one.jpg"),
+            SimpleNamespace(photo_id=2, relative_path="Reception/two.jpg"),
+        ]
+        db.query.side_effect = [event_query, photo_query, source_query]
         with patch("app.database.db.SessionLocal", return_value=context), \
                 patch("app.services.relay_worker.GALLERY_MANIFEST_BATCH_SIZE", 2), \
                 patch.object(self.worker, "request") as send:
@@ -201,6 +205,9 @@ class RelayWorkerTests(unittest.TestCase):
         self.assertEqual([len(payload["photos"]) for payload in payloads], [2, 1])
         self.assertEqual([payload["complete"] for payload in payloads], [False, True])
         self.assertEqual(payloads[0]["generation"], payloads[1]["generation"])
+        self.assertEqual(payloads[0]["photos"][0]["source_path"], "Wedding/one.jpg")
+        self.assertEqual(payloads[0]["photos"][1]["source_path"], "Reception/two.jpg")
+        self.assertEqual(payloads[1]["photos"][0]["source_path"], "three.jpg")
 
     def test_gallery_original_upload_reads_the_requested_resolved_file(self):
         with TemporaryDirectory() as folder:

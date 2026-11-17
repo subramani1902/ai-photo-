@@ -9,12 +9,17 @@
   <link rel="icon" href="./favicon.webp" type="image/webp">
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./account.css">
+  <link rel="stylesheet" href="./navigation.css">
   <script type="module" src="./account.js"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="./" aria-label="SM Photography home"><img class="brand-logo" src="./favicon.webp" alt=""><span>SM Photography<small>YOUR MOMENTS, FOUND</small></span></a>
-    <a class="text-button" href="./">Find event photos ↗</a>
+    <nav class="site-nav" aria-label="Site navigation">
+      <a href="./">Find event photos</a>
+      <a href="./account.html" aria-current="page">Client account</a>
+      <a href="./gallery.html">Private gallery</a>
+    </nav>
   </header>
   <main>
     <section class="intro account-intro" aria-labelledby="account-title">

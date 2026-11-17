@@ -8,6 +8,7 @@
   <title>Private event gallery | SM Photography</title>
   <link rel="icon" href="./favicon.webp" type="image/webp">
   <link rel="stylesheet" href="./gallery.css">
+  <link rel="stylesheet" href="./navigation.css">
 </head>
 <body>
   <header class="gallery-header">
@@ -15,6 +16,11 @@
       <img src="./favicon.webp" alt="">
       <span>SM Photography<small>YOUR MOMENTS, FOUND</small></span>
     </a>
+    <nav class="site-nav" aria-label="Site navigation">
+      <a href="./">Find event photos</a>
+      <a href="./account.html">Client account</a>
+      <a href="./gallery.html" aria-current="page">Private gallery</a>
+    </nav>
   </header>
   <main>
     <section id="login-panel" class="panel">
@@ -43,7 +49,7 @@
         <button id="export-favourites" class="selection-button" type="button" disabled>Download editor CSV</button>
       </div>
       <p class="selection-note">Favourites stay in this browser tab. Download your CSV before closing it. More photos appear as processing finishes.</p>
-      <div id="photo-grid" class="photo-grid" aria-live="polite"></div>
+      <div id="photo-grid" class="folder-sections" aria-live="polite"></div>
       <p id="gallery-message" class="message" role="status" aria-live="polite"></p>
       <button id="load-more" class="load-more" type="button" hidden>Load more photos</button>
     </section>

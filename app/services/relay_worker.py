@@ -201,6 +201,7 @@ class RelayWorker:
     def sync_gallery_manifest(self):
         from app.database.db import SessionLocal
         from app.database.models import Event, Photo
+        from app.services.person_groups import PhotoSource
 
         with SessionLocal() as db:
             event = db.query(Event).filter_by(id=self.event_id).one_or_none()
@@ -214,9 +215,22 @@ class RelayWorker:
                 .order_by(Photo.id)
                 .all()
             )
+            sources = (
+                db.query(PhotoSource)
+                .filter_by(event_id=self.event_id)
+                .order_by(PhotoSource.id)
+                .all()
+            )
+        source_paths = {}
+        for source in sources:
+            source_paths.setdefault(source.photo_id, source.relative_path)
         generation = str(uuid4())
         rows = [
-            {"photo_id": photo_id, "filename": filename}
+            {
+                "photo_id": photo_id,
+                "filename": filename,
+                "source_path": source_paths.get(photo_id, filename),
+            }
             for photo_id, filename in photos
         ]
         if not rows:

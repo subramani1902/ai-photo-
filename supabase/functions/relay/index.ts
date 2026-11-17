@@ -381,7 +381,7 @@ Deno.serve(async (req) => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
           !Number.isSafeInteger(after) || after < 0) fail("Invalid page", 400);
       let query = db.from("photo_finder_gallery_photos")
-        .select("photo_id,filename")
+        .select("photo_id,filename,source_path")
         .eq("event_id", gallery.event_id)
         .order("photo_id")
         .limit(limit);
@@ -397,7 +397,13 @@ Deno.serve(async (req) => {
         event_id: gallery.event_id,
         event_name: event.current_folder || event.name,
         photo_count: total.count || 0,
-        photos: rows.map((photo) => ({ id: Number(photo.photo_id), filename: photo.filename })),
+        photos: rows.map((photo) => ({
+          id: Number(photo.photo_id),
+          filename: photo.filename,
+          folder_name: photo.source_path.includes("/")
+            ? photo.source_path.split("/")[0]
+            : event.current_folder || event.name,
+        })),
         next_cursor: rows.length === limit ? String(rows[rows.length - 1].photo_id) : null,
       });
     }
@@ -493,17 +499,22 @@ Deno.serve(async (req) => {
       if (!job) fail("Photo request not found", 404);
       if (!galleryJobMatch[2]) return json({ status: job.status });
       if (job.status !== "ready" || !job.object_path) fail("Photo is not ready", 409);
-      const image = check(await db.storage.from(bucket).download(job.object_path));
-      if (!image) fail("Photo is no longer available", 404);
-      check(await db.storage.from(bucket).remove([job.object_path]));
       const consumed = check(await db.from("photo_finder_gallery_jobs")
-        .update({ status: "expired", object_path: null })
+        .update({ status: "expired" })
         .eq("id", job.id)
         .eq("gallery_id", gallery.id)
         .eq("status", "ready")
         .select("id")
         .maybeSingle());
-      if (!consumed) fail("Photo is no longer available", 409);
+      if (!consumed) fail("Photo was already delivered", 409);
+      const image = check(await db.storage.from(bucket).download(job.object_path));
+      if (!image) fail("Photo is no longer available", 404);
+      check(await db.storage.from(bucket).remove([job.object_path]));
+      check(await db.from("photo_finder_gallery_jobs")
+        .update({ object_path: null })
+        .eq("id", job.id)
+        .eq("gallery_id", gallery.id)
+        .eq("status", "expired"));
       const headers: Record<string, string> = {
         ...cors,
         "Cache-Control": "no-store",
@@ -647,7 +658,11 @@ Deno.serve(async (req) => {
             typeof payload.complete !== "boolean") fail("Invalid gallery manifest");
         const seen = new Set<number>();
         const rows = photos.map((photo: unknown) => {
-          const item = photo as { photo_id?: unknown; filename?: unknown } | null;
+          const item = photo as {
+            photo_id?: unknown;
+            filename?: unknown;
+            source_path?: unknown;
+          } | null;
           if (!item || typeof item !== "object" ||
               typeof item.photo_id !== "number" || !Number.isSafeInteger(item.photo_id) ||
               item.photo_id <= 0 || typeof item.filename !== "string" ||
@@ -655,11 +670,19 @@ Deno.serve(async (req) => {
               item.filename.trim() !== item.filename ||
               /[/\\\u0000-\u001f\u007f]/.test(item.filename) ||
               seen.has(item.photo_id)) fail("Invalid gallery manifest");
+          const sourcePath = item.source_path ?? item.filename;
+          if (typeof sourcePath !== "string" || sourcePath.length < 1 ||
+              sourcePath.length > 2048 || sourcePath.trim() !== sourcePath ||
+              sourcePath.includes("\\") ||
+              sourcePath.split("/").some((part) => !part || part === "." || part === "..") ||
+              /[\u0000-\u001f\u007f]/.test(sourcePath) ||
+              sourcePath.split("/").at(-1) !== item.filename) fail("Invalid gallery manifest");
           seen.add(item.photo_id);
           return {
             event_id: event.id,
             photo_id: item.photo_id,
             filename: item.filename,
+            source_path: sourcePath,
             sync_generation: payload.generation,
             updated_at: new Date().toISOString(),
           };

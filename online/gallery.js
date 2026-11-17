@@ -13,6 +13,7 @@ const exportButton = $("#export-favourites"), favouriteFilter = $("#favourite-fi
 const assetQueue = [];
 const queuedPhotos = new Map();
 const cards = new Map(), favourites = new Map(), previewUrls = new Set();
+const folderGrids = new Map();
 let activeAssets = 0;
 let shareToken = location.hash.slice(1) || sessionStorage.getItem("photo-finder-gallery-token") || "";
 let sessionToken = sessionStorage.getItem("photo-finder-gallery-session") || "";
@@ -21,6 +22,14 @@ let loadingPage = false;
 let photoObserver;
 let galleryContext = {}, selectionKey = "", showFavourites = false, exporting = false;
 let generation = 0, requestsController = new AbortController();
+
+class GalleryRequestError extends Error {
+  constructor(message, status, retryAfter) {
+    super(message);
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
+}
 
 if (sessionStorage.getItem("photo-finder-gallery-session-token") !== shareToken) {
   sessionToken = "";
@@ -39,7 +48,7 @@ $("#gallery-link").required = !shareToken;
 function resetAssets() {
   generation++;
   requestsController.abort(); requestsController = new AbortController();
-  assetQueue.length = 0; queuedPhotos.clear(); cards.clear();
+  assetQueue.length = 0; queuedPhotos.clear(); cards.clear(); folderGrids.clear();
   photoObserver?.disconnect();
   for (const url of previewUrls) URL.revokeObjectURL(url);
   previewUrls.clear();
@@ -87,11 +96,11 @@ function clearSession() {
   sessionToken = "";
   sessionStorage.removeItem("photo-finder-gallery-session");
   sessionStorage.removeItem("photo-finder-gallery-session-token");
-  photoGrid.replaceChildren(); updateFavourites();
+  photoGrid.replaceChildren(); folderGrids.clear(); updateFavourites();
 }
 
 async function readResponse(response) {
-  if ([401, 403].includes(response.status) && sessionToken) {
+  if (response.status === 401 && sessionToken) {
     clearSession();
     galleryPanel.hidden = true;
     loginPanel.hidden = false;
@@ -99,7 +108,11 @@ async function readResponse(response) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || "The gallery service is temporarily unavailable.");
+    throw new GalleryRequestError(
+      body.detail || "The gallery service is temporarily unavailable.",
+      response.status,
+      Number(response.headers.get("Retry-After")) || 0,
+    );
   }
   return response;
 }
@@ -111,6 +124,7 @@ async function startGallery() {
   galleryPanel.hidden = false;
   galleryMessage.textContent = "";
   photoGrid.replaceChildren();
+  folderGrids.clear();
   nextCursor = null;
   showFavourites = false;
   if (photoObserver) photoObserver.disconnect();
@@ -145,7 +159,7 @@ async function loadPage() {
     nextCursor = result.next_cursor;
     updateFavourites();
     galleryMessage.textContent = photoGrid.childElementCount
-      ? `${result.photo_count ?? photoGrid.childElementCount} photos available · ${photoGrid.childElementCount} listed. Choose favourites for your editor.`
+      ? `${result.photo_count ?? cards.size} photos available · ${cards.size} listed. Choose favourites for your editor.`
       : "No photos are available in this gallery yet.";
   } catch (error) {
     if (version === generation) galleryMessage.textContent = error.message;
@@ -156,6 +170,21 @@ async function loadPage() {
 
 function addPhoto(photo) {
   if (cards.has(photo.id)) return;
+  const folderName = typeof photo.folder_name === "string" && photo.folder_name.trim()
+    ? photo.folder_name
+    : galleryContext.event_name || "Photos";
+  let grid = folderGrids.get(folderName);
+  if (!grid) {
+    const section = document.createElement("section");
+    section.className = "folder-section";
+    const heading = document.createElement("h2");
+    heading.textContent = folderName;
+    grid = document.createElement("div");
+    grid.className = "photo-grid";
+    section.append(heading, grid);
+    photoGrid.append(section);
+    folderGrids.set(folderName, grid);
+  }
   const card = document.createElement("article");
   card.className = "photo-card";
   const frame = document.createElement("div");
@@ -188,7 +217,7 @@ function addPhoto(photo) {
   download.addEventListener("click", () => downloadOriginal(photo, download));
   details.append(filename, favourite, download);
   card.append(frame, details);
-  photoGrid.append(card);
+  grid.append(card);
   cards.set(photo.id, { card, button: favourite });
   updateFavourites();
   queuedPhotos.set(frame, { photo, placeholder });
@@ -229,32 +258,70 @@ function pumpQueue() {
   }
 }
 
+function waitForRetry(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
+async function createPhotoJob(photo, variant, signal) {
+  for (let retry = 0; ; retry++) {
+    try {
+      return await readResponse(await fetch(`${RELAY}/guest/gallery/jobs`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ photo_id: photo.id, variant }),
+        signal,
+      }));
+    } catch (error) {
+      if (error.status !== 429 || retry >= 8) throw error;
+      const delay = error.retryAfter
+        ? error.retryAfter * 1000
+        : Math.min(2000 * (2 ** retry), 15_000);
+      await waitForRetry(delay, signal);
+    }
+  }
+}
+
 async function fetchPhoto(photo, variant) {
   const signal = requestsController.signal;
-  const created = await readResponse(await fetch(`${RELAY}/guest/gallery/jobs`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ photo_id: photo.id, variant }),
-    signal,
-  }));
-  const job = await created.json();
-  for (let attempt = 0; attempt < 400; attempt++) {
-    signal.throwIfAborted();
-    if (attempt) await new Promise((resolve) => setTimeout(resolve, 1500));
-    const statusResponse = await readResponse(await fetch(
-      `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}`,
-      { headers: authHeaders(), signal },
-    ));
-    const status = (await statusResponse.json()).status;
-    if (status === "failed" || status === "expired") {
-      throw new Error("This photo is temporarily unavailable. Please try again later.");
+  for (let recovery = 0; recovery < 3; recovery++) {
+    const created = await createPhotoJob(photo, variant, signal);
+    const job = await created.json();
+    for (let attempt = 0; attempt < 400; attempt++) {
+      signal.throwIfAborted();
+      if (attempt) await waitForRetry(1500, signal);
+      const statusResponse = await readResponse(await fetch(
+        `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}`,
+        { headers: authHeaders(), signal },
+      ));
+      const status = (await statusResponse.json()).status;
+      if (status === "failed" || status === "expired") {
+        throw new Error("This photo is temporarily unavailable. Please try again later.");
+      }
+      if (status !== "ready") continue;
+      try {
+        const fileResponse = await readResponse(await fetch(
+          `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}/file`,
+          { headers: authHeaders(), signal },
+        ));
+        return fileResponse.blob();
+      } catch (error) {
+        if (error.status !== 409 || recovery === 2) throw error;
+        break;
+      }
     }
-    if (status !== "ready") continue;
-    const fileResponse = await readResponse(await fetch(
-      `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}/file`,
-      { headers: authHeaders(), signal },
-    ));
-    return fileResponse.blob();
   }
   throw new Error("This photo is taking too long to load. Please try again.");
 }
