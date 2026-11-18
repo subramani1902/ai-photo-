@@ -85,6 +85,7 @@ button { font: inherit; cursor: pointer; }
 .load-more { display: block; min-width: 200px; margin: 28px auto 0; padding: 0 22px; background: transparent; color: var(--ink); border: 1px solid var(--line); }
 .load-more:disabled { opacity: .55; cursor: wait; }
 .selection-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 20px 0 10px; }
+.album-folders { display: flex; flex-wrap: wrap; gap: 8px; margin-right: auto; }
 .selection-button { min-height: 42px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; background: var(--card); color: var(--ink); }
 .selection-button:disabled { opacity: .5; cursor: default; }
 .selection-button[aria-pressed="true"], .favourite[aria-pressed="true"] { background: var(--accent); color: white; border-color: var(--accent); }

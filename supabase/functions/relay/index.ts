@@ -399,6 +399,8 @@ Deno.serve(async (req) => {
       const url = new URL(req.url);
       const limitText = url.searchParams.get("limit") || "60";
       const afterText = url.searchParams.get("after") || "0";
+      const folder = url.searchParams.get("folder") || "";
+      if (folder && !["wedding", "reception"].includes(folder)) fail("Invalid folder", 400);
       if (!/^\d+$/.test(limitText) || !/^\d+$/.test(afterText)) fail("Invalid page", 400);
       const limit = Number(limitText), after = Number(afterText);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
@@ -409,10 +411,13 @@ Deno.serve(async (req) => {
         .order("photo_id")
         .limit(limit);
       if (after > 0) query = query.gt("photo_id", after);
+      if (folder) query = query.ilike("source_path", folder + "/%");
       const photos = check(await query);
-      const total = await db.from("photo_finder_gallery_photos")
+      let totalQuery = db.from("photo_finder_gallery_photos")
         .select("photo_id", { count: "exact", head: true })
         .eq("event_id", gallery.event_id);
+      if (folder) totalQuery = totalQuery.ilike("source_path", folder + "/%");
+      const total = await totalQuery;
       check(total);
       const rows = photos || [];
       return json({
@@ -532,7 +537,14 @@ Deno.serve(async (req) => {
         .maybeSingle());
       if (!consumed) fail("Photo was already delivered", 409);
       }
-      const image = check(await db.storage.from(bucket).download(job.object_path));
+      const stored = await db.storage.from(bucket).download(job.object_path);
+      const missing = stored.error as { statusCode?: string | number; status?: number } | null;
+      if ((!stored.data && !stored.error) || Number(missing?.statusCode || missing?.status) === 404) {
+        check(await db.from("photo_finder_gallery_jobs").update({ status: "expired" })
+          .eq("id", job.id).eq("gallery_id", gallery.id));
+        fail("The preview expired. Please retry.", 409);
+      }
+      const image = check(stored);
       if (!image) fail("Photo is no longer available", 404);
       if (job.variant === "original") {
       check(await db.storage.from(bucket).remove([job.object_path]));
@@ -709,7 +721,7 @@ Deno.serve(async (req) => {
             event_id: event.id,
             photo_id: item.photo_id,
             filename: item.filename,
-            source_path: sourcePath,
+            ...(item.source_path === undefined ? {} : { source_path: sourcePath }),
             sync_generation: payload.generation,
             updated_at: new Date().toISOString(),
           };

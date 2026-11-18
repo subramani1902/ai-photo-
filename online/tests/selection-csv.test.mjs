@@ -5,8 +5,8 @@ import { buildSelectionCsv, createSelectionCsv, restoreSelection } from "../sele
 test("editor CSV preserves filenames, order and Unicode and quotes commas and double quotes", () => {
   const csv = buildSelectionCsv([{ id: 9, filename: 'Photo, "one".jpg' }, { id: 12, filename: "தமிழ்.jpg" }, { id: 9, filename: "duplicate.jpg" }], { eventId: 3, eventName: "Wedding" });
   assert.ok(csv.startsWith('\ufeff"selection_number"'));
-  assert.ok(csv.includes('"1","3","Wedding","9","Photo, ""one"".jpg","yes"\r\n'));
-  assert.ok(csv.includes('"2","3","Wedding","12","தமிழ்.jpg","yes"\r\n'));
+  assert.ok(csv.includes('"1","3","Wedding","9","","Photo, ""one"".jpg","yes"\r\n'));
+  assert.ok(csv.includes('"2","3","Wedding","12","","தமிழ்.jpg","yes"\r\n'));
   assert.equal(csv.includes("duplicate.jpg"), false);
   assert.equal(csv.split("\r\n").length, 4);
 });

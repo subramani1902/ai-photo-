@@ -19,7 +19,8 @@ const workerSecret = "c".repeat(64);
 const workerTokenHash = Buffer.from(await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(workerSecret))).toString("hex");
 const galleryId = "40000000-0000-4000-8000-000000000001";
 
-function fixture({ status = "processing", expired = false, active = true, galleryActive = true, secondaryUploaded = false } = {}) {
+function fixture({ status = "processing", expired = false, active = true, galleryActive = true, secondaryUploaded = false,
+  variant = "thumbnail", cachedJobs = 1, cachedStatus = "ready", missingStorage = false } = {}) {
   const tables = {
     photo_finder_jobs: [{ id: jobId, event_id: eventId, status, guest_token_hash: tokenHash,
       expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3600000).toISOString(), error_message: null }],
@@ -32,10 +33,11 @@ function fixture({ status = "processing", expired = false, active = true, galler
     photo_finder_gallery_photos: [{ event_id: eventId, photo_id: 11, filename: "a.jpg", source_path: "Wedding/a.jpg" },
       { event_id: eventId, photo_id: 12, filename: "b.jpg", source_path: "Reception/b.jpg" },
       { event_id: "different-event", photo_id: 13, filename: "private-other-event.jpg" }],
-    photo_finder_gallery_jobs: [{ id: "50000000-0000-4000-8000-000000000001",
-      gallery_id: galleryId, event_id: eventId, photo_id: 11, filename: "a.jpg",
-      variant: "thumbnail", status: "ready", object_path: "gallery/test/a.webp",
-      expires_at: new Date(Date.now() + 3600000).toISOString() }],
+    photo_finder_gallery_jobs: Array.from({ length: cachedJobs }, (_, index) => ({
+      id: "50000000-0000-4000-8000-" + String(index + 1).padStart(12, "0"),
+      gallery_id: galleryId, event_id: eventId, photo_id: index === 0 ? 11 : 100 + index, filename: "a.jpg",
+      variant, status: cachedStatus, object_path: "gallery/test/a.webp",
+      created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 3600000).toISOString() })),
     photo_finder_results: [
       { id: readyId, job_id: jobId, photo_id: 11, filename: "ready.jpg", similarity: 0.8, face_count: 1, uploaded: true, object_path: "private/ready" },
       { id: pendingId, job_id: jobId, photo_id: 12, filename: "pending.jpg", similarity: 0.9, face_count: 4, uploaded: secondaryUploaded, object_path: "private/pending" },
@@ -53,6 +55,9 @@ function fixture({ status = "processing", expired = false, active = true, galler
         eq(key, value) { rows = rows.filter(row => row[key] === value); return query; },
         in(key, value) { rows = rows.filter(row => value.includes(row[key])); return query; },
         gt(key, value) { rows = rows.filter(row => row[key] > value); return query; },
+        lt(key, value) { rows = rows.filter(row => row[key] < value); return query; },
+        ilike(key, value) { rows = rows.filter(row => String(row[key] || "").toLowerCase().startsWith(value.replace(/%$/, "").toLowerCase())); return query; },
+        or(value) { assert.equal(value, "status.in.(pending,processing),and(status.eq.ready,variant.eq.original)"); rows = rows.filter(row => ["pending", "processing"].includes(row.status) || (row.status === "ready" && row.variant === "original")); return query; },
         order(key, { ascending = true } = {}) { rows.sort((a, b) => (a[key] - b[key]) * (ascending ? 1 : -1)); return query; },
         limit(value) { maximum = value; return query; },
         maybeSingle() { single = true; return query; },
@@ -75,7 +80,7 @@ function fixture({ status = "processing", expired = false, active = true, galler
     storage: { from(bucket) {
       assert.equal(bucket, "photo-finder-private");
       return {
-        async download(path) { downloads.push(path); return { data: new Blob(["synthetic-photo"], { type: "image/jpeg" }), error: null }; },
+        async download(path) { downloads.push(path); return missingStorage ? { data: null, error: { statusCode: "404" } } : { data: new Blob(["synthetic-photo"], { type: "image/jpeg" }), error: null }; },
         async remove(paths) { removals.push(...paths); return { data: [], error: null }; },
       };
     } },
@@ -87,9 +92,15 @@ function fixture({ status = "processing", expired = false, active = true, galler
   });
   return {
     downloads, removals,
-    galleryRequest(token = secret, after = "") {
-      return handler(new Request(`https://relay.example/functions/v1/relay/guest/gallery/photos?limit=1${after ? `&after=${after}` : ""}`, {
+    galleryRequest(token = secret, after = "", folder = "") {
+      return handler(new Request(`https://relay.example/functions/v1/relay/guest/gallery/photos?limit=1${after ? `&after=${after}` : ""}${folder ? `&folder=${folder}` : ""}`, {
         headers: { "X-Gallery-Session": token },
+      }));
+    },
+    createJob() {
+      return handler(new Request("https://relay.example/functions/v1/relay/guest/gallery/jobs", {
+        method: "POST", headers: { "X-Gallery-Session": secret, "content-type": "application/json" },
+        body: JSON.stringify({ photo_id: 12, variant: "thumbnail" }),
       }));
     },
     workerRequest(payload, token = workerSecret) {
@@ -194,12 +205,40 @@ test("full-gallery CSV context and count stay within the authenticated event", a
   assert.equal(JSON.stringify(body).includes("private-other-event"), false);
 });
 
-test("gallery file delivery is atomically consumed to avoid concurrent 409 responses", async () => {
+test("private gallery previews can be read concurrently without consuming the cached thumbnail", async () => {
   const api = fixture();
   const responses = await Promise.all([api.fileRequest(), api.fileRequest()]);
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 200]);
+  assert.deepEqual(api.downloads, ["gallery/test/a.webp", "gallery/test/a.webp"]);
+  assert.deepEqual(api.removals, []);
+});
+
+test("original downloads retain one-time delivery and private access checks", async () => {
+  const api = fixture({ variant: "original" });
+  const responses = await Promise.all([api.fileRequest(), api.fileRequest()]);
   assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
-  assert.deepEqual(api.downloads, ["gallery/test/a.webp"]);
   assert.deepEqual(api.removals, ["gallery/test/a.webp"]);
+  assert.equal((await fixture({ galleryActive: false }).fileRequest()).status, 403);
+});
+
+test("cached thumbnails do not fill the delivery queue, while pending work remains limited", async () => {
+  assert.equal((await fixture({ cachedJobs: 12 }).createJob()).status, 202);
+  assert.equal((await fixture({ cachedJobs: 8, cachedStatus: "pending" }).createJob()).status, 429);
+  assert.equal((await fixture({ cachedJobs: 8, variant: "original" }).createJob()).status, 429);
+});
+
+test("a missing cached preview becomes retryable instead of remaining permanently broken", async () => {
+  assert.equal((await fixture({ missingStorage: true }).fileRequest()).status, 409);
+});
+
+test("Wedding and Reception pages are filtered by their original source folders", async () => {
+  const wedding = await (await fixture().galleryRequest(secret, "", "wedding")).json();
+  const reception = await (await fixture().galleryRequest(secret, "", "reception")).json();
+  assert.equal(wedding.photo_count, 1);
+  assert.equal(reception.photo_count, 1);
+  assert.equal(wedding.photos[0].filename, "a.jpg");
+  assert.equal(reception.photos[0].filename, "b.jpg");
+  assert.equal((await fixture().galleryRequest(secret, "", "../private")).status, 400);
 });
 
 test("gallery creation accepts a valid event date as the password", async () => {

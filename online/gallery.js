@@ -22,6 +22,7 @@ let loadingPage = false;
 let photoObserver;
 let galleryContext = {}, selectionKey = "", showFavourites = false, exporting = false;
 let generation = 0, requestsController = new AbortController();
+let activeFolder = "wedding";
 
 class GalleryRequestError extends Error {
   constructor(message, status, retryAfter) {
@@ -159,6 +160,7 @@ async function loadPage() {
   const version = generation;
   try {
     const params = new URLSearchParams({ limit: "60" });
+    params.set("folder", activeFolder);
     if (nextCursor) params.set("after", nextCursor);
     const response = await readResponse(await fetch(`${RELAY}/guest/gallery/photos?${params}`, {
       headers: authHeaders(), signal: requestsController.signal, cache: "no-store",
@@ -181,9 +183,10 @@ async function loadPage() {
 
 function addPhoto(photo) {
   if (cards.has(photo.id)) return;
-  const folderName = typeof photo.folder_name === "string" && photo.folder_name.trim()
+  let folderName = typeof photo.folder_name === "string" && photo.folder_name.trim()
     ? photo.folder_name
     : galleryContext.event_name || "Photos";
+  if (["wedding", "reception"].includes(folderName.toLowerCase())) folderName = folderName[0].toUpperCase() + folderName.slice(1).toLowerCase();
   let grid = folderGrids.get(folderName);
   if (!grid) {
     const section = document.createElement("section");
@@ -218,7 +221,7 @@ function addPhoto(photo) {
   favourite.setAttribute("aria-label", "Choose " + photo.filename + " for editing");
   favourite.addEventListener("click", () => {
     if (favourites.has(photo.id)) favourites.delete(photo.id);
-    else favourites.set(photo.id, { id: photo.id, filename: photo.filename });
+    else favourites.set(photo.id, { id: photo.id, filename: photo.filename, folder_name: folderName });
     persistFavourites(); updateFavourites();
     if (showFavourites && !favourites.size) galleryMessage.textContent = "No favourites chosen yet. Choose photos in the full gallery first.";
   });
@@ -409,6 +412,19 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 
 loadMoreButton.addEventListener("click", loadPage);
+document.querySelectorAll("[data-gallery-folder]").forEach(button => button.addEventListener("click", async () => {
+  if (loadingPage || button.dataset.galleryFolder === activeFolder) return;
+  activeFolder = button.dataset.galleryFolder;
+  document.querySelectorAll("[data-gallery-folder]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+  // Favourites are retained when changing folders.
+  resetAssets(); photoGrid.replaceChildren(); nextCursor = null; showFavourites = false;
+  if ("IntersectionObserver" in window) {
+    photoObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) if (entry.isIntersecting) { photoObserver.unobserve(entry.target); queueThumbnail(entry.target); }
+    }, { rootMargin: "320px 0px" });
+  }
+  await loadPage();
+}));
 favouriteFilter.addEventListener("click", () => {
   showFavourites = !showFavourites;
   if (showFavourites) {

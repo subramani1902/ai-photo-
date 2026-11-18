@@ -45,6 +45,10 @@
       <p class="intro">Choose your favourites, then download the selection CSV to share with your photo editor.</p>
       <p class="availability">Photos load on demand from the studio’s external drive. The studio computer, drive, and internet connection must be available while you browse.</p>
       <div class="selection-toolbar" aria-label="Choose photos for editing">
+        <div class="album-folders" role="group" aria-label="Event folders">
+          <button class="selection-button" type="button" data-gallery-folder="wedding" aria-pressed="true">Wedding</button>
+          <button class="selection-button" type="button" data-gallery-folder="reception" aria-pressed="false">Reception</button>
+        </div>
         <button id="favourite-filter" class="selection-button" type="button" aria-pressed="false">Show favourites <span id="favourite-count">0</span></button>
         <button id="export-favourites" class="selection-button" type="button" disabled>Download editor CSV</button>
       </div>
