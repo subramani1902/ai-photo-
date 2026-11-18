@@ -1,6 +1,7 @@
 .site-nav {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
   margin-left: auto;
 }
@@ -64,7 +65,7 @@
 
   .site-nav a {
     min-height: 38px;
-    padding: 0 10px;
+    padding: 0 8px;
     font-size: 12px;
   }
 

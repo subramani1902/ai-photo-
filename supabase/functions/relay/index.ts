@@ -420,6 +420,14 @@ Deno.serve(async (req) => {
       const total = await totalQuery;
       check(total);
       const rows = photos || [];
+      const cachedPreviews = rows.length ? check(await db.from("photo_finder_gallery_jobs")
+        .select("id,photo_id")
+        .eq("gallery_id", gallery.id)
+        .eq("variant", "thumbnail")
+        .eq("status", "ready")
+        .gt("expires_at", new Date().toISOString())
+        .in("photo_id", rows.map((photo) => photo.photo_id))) : [];
+      const readyPreviews = new Map((cachedPreviews || []).map((job) => [Number(job.photo_id), job.id]));
       return json({
         gallery_id: gallery.id,
         event_id: gallery.event_id,
@@ -428,6 +436,7 @@ Deno.serve(async (req) => {
         photos: rows.map((photo) => ({
           id: Number(photo.photo_id),
           filename: photo.filename,
+          ...(readyPreviews.has(Number(photo.photo_id)) ? { preview_job_id: readyPreviews.get(Number(photo.photo_id)) } : {}),
           folder_name: photo.source_path.includes("/")
             ? photo.source_path.split("/")[0]
             : event.current_folder || event.name,

@@ -199,10 +199,19 @@ test("full-gallery CSV context and count stay within the authenticated event", a
   assert.equal(body.event_name, "Current folder");
   assert.equal(body.photo_count, 2);
   assert.equal(body.next_cursor, "11");
-  assert.deepEqual(body.photos, [{ id: 11, filename: "a.jpg", folder_name: "Wedding" }]);
+  assert.deepEqual(body.photos, [{ id: 11, filename: "a.jpg", folder_name: "Wedding",
+    preview_job_id: "50000000-0000-4000-8000-000000000001" }]);
   const reception = await (await fixture().galleryRequest(secret, "11")).json();
   assert.deepEqual(reception.photos, [{ id: 12, filename: "b.jpg", folder_name: "Reception" }]);
   assert.equal(JSON.stringify(body).includes("private-other-event"), false);
+});
+
+test("gallery metadata offers only ready private thumbnails, never original delivery IDs", async () => {
+  for (const settings of [{ variant: "original" }, { cachedStatus: "pending" }, { cachedStatus: "expired" }]) {
+    const body = await (await fixture(settings).galleryRequest()).json();
+    assert.equal(body.photos[0].preview_job_id, undefined);
+  }
+  assert.equal((await fixture().fileRequest("")).status, 401);
 });
 
 test("private gallery previews can be read concurrently without consuming the cached thumbnail", async () => {

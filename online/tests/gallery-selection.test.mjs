@@ -21,20 +21,25 @@ class Element {
   removeAttribute(name) { this.attributes.delete(name); }
   remove() {}
   click() { this.clicked = true; }
+  querySelector(tag) { return this.children.find(child => child.tagName === tag); }
 }
 
 function surface() {
-  const elements = new Map(), blobs = [], observers = [];
+  const elements = new Map(), blobs = [], observers = [], revoked = [], windowEvents = new Map();
+  const folders = ["wedding", "reception"].map(folder => {
+    const button = new Element(); button.dataset.galleryFolder = folder; return button;
+  });
   const element = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   class BrowserURL extends URL {
     static createObjectURL(blob) { blobs.push(blob); return "blob:test-" + blobs.length; }
-    static revokeObjectURL() {}
+    static revokeObjectURL(url) { revoked.push(url); }
   }
-  const document = { body: new Element(), querySelector: element, querySelectorAll: () => [],
-    createElement: () => new Element(), createTextNode: text => ({ textContent: text }) };
-  return { element, blobs, observers, globals: { document, URL: BrowserURL, URLSearchParams, Blob, AbortController,
+  const document = { body: new Element(), querySelector: element,
+    querySelectorAll: selector => selector === "[data-gallery-folder]" ? folders : [],
+    createElement: tag => Object.assign(new Element(), { tagName: tag }), createTextNode: text => ({ textContent: text }) };
+  return { element, blobs, observers, folders, revoked, windowEvents, globals: { document, URL: BrowserURL, URLSearchParams, Blob, AbortController,
     setTimeout(callback) { queueMicrotask(callback); return 0; }, clearTimeout() {}, console,
-    window: { addEventListener() {}, IntersectionObserver: true },
+    window: { addEventListener(name, handler) { windowEvents.set(name, handler); }, IntersectionObserver: true, innerHeight: 800 },
     IntersectionObserver: class {
       constructor(callback) { this.callback = callback; this.targets = []; observers.push(this); }
       observe(target) { this.targets.push(target); }
@@ -47,6 +52,92 @@ function surface() {
 const galleryCode = (await readFile(new URL("../gallery.js", import.meta.url), "utf8")).replace(/^import [^\n]+;\r?\n/gm, "");
 const clientCode = (await readFile(new URL("../client-event-gallery.js", import.meta.url), "utf8")).replace(/^import [^\n]+;\r?\n/gm, "").replace("export function", "function");
 const settle = async () => { await setImmediate(); await setImmediate(); };
+
+function openGallery(fetcher) {
+  const data = new Map([
+    ["photo-finder-gallery-token", "a".repeat(64)], ["photo-finder-gallery-session-token", "a".repeat(64)],
+    ["photo-finder-gallery-session", "b".repeat(64)],
+  ]);
+  const s = surface();
+  s.api = vm.runInNewContext(galleryCode + "\n({ fetchPhoto, clearSession });", {
+    ...s.globals, sessionStorage: { getItem: key => data.get(key) ?? null,
+      setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) },
+    location: { hash: "", pathname: "/gallery.html", origin: "https://studio.example" },
+    history: { replaceState() {} }, fetch: fetcher,
+  });
+  return s;
+}
+
+test("ready private previews need one file request; revisiting a folder reuses the image after access validation", async () => {
+  const calls = [];
+  const photo = { id: 101, filename: "a.jpg", folder_name: "Wedding", preview_job_id: "50000000-0000-4000-8000-000000000001" };
+  const s = openGallery(async (url, options) => {
+    calls.push(url);
+    assert.equal(options.headers["X-Gallery-Session"], "b".repeat(64));
+    if (url.includes("/photos?")) return Response.json({ gallery_id: "gallery-test", photos: url.includes("folder=wedding") ? [photo] : [], next_cursor: null });
+    assert.ok(url.endsWith(photo.preview_job_id + "/file"));
+    return new Response(new Blob(["private preview"]));
+  });
+  await settle();
+  const frame = s.observers[0].targets[0];
+  s.observers[0].intersect(frame); await settle();
+  assert.equal(frame.dataset.previewState, "ready");
+  assert.equal(calls.length, 2, "List and file only: no job POST or status polling for cached previews");
+  const imageUrl = frame.querySelector("img").src;
+  await s.folders[1].emit("click"); await s.folders[0].emit("click");
+  const revisited = s.observers.at(-1).targets[0];
+  s.observers.at(-1).intersect(revisited); await settle();
+  assert.equal(revisited.querySelector("img").src, imageUrl);
+  assert.equal(calls.filter(url => url.endsWith("/file")).length, 1);
+  assert.equal(calls.filter(url => url.includes("/photos?")).length, 3, "Revalidate gallery access on each folder change");
+  s.windowEvents.get("pagehide")();
+  assert.ok(s.revoked.includes(imageUrl), "Private image memory is released when leaving");
+});
+
+test("stale cached previews regenerate, and cached originals never use the thumbnail shortcut", async () => {
+  const calls = [];
+  const photo = { id: 101, filename: "a.jpg", preview_job_id: "50000000-0000-4000-8000-000000000001" };
+  const s = openGallery(async (url, options) => {
+    if (url.includes("/photos?")) return Response.json({ gallery_id: "gallery-test", photos: [] });
+    calls.push([url, options.method]);
+    if (url.includes(photo.preview_job_id + "/file")) return Response.json({ detail: "Expired" }, { status: 409 });
+    if (options.method === "POST") return Response.json({ job_id: "new-job", status: "ready" });
+    assert.ok(url.endsWith("/new-job/file"));
+    return new Response(new Blob(["preview"]));
+  });
+  await settle();
+  await s.api.fetchPhoto({ ...photo }, "thumbnail");
+  assert.equal(calls.length, 3, "A vanished cache is regenerated without status polling once ready");
+  calls.length = 0;
+  await s.api.fetchPhoto(photo, "original");
+  assert.equal(calls[0][1], "POST", "Original downloads must be independently authorized and queued");
+});
+
+test("newly visible photos move ahead of offscreen previews in a long scrolling queue", async () => {
+  const started = [], releases = new Map();
+  const photos = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, filename: i + ".jpg",
+    preview_job_id: "50000000-0000-4000-8000-" + String(i + 1).padStart(12, "0") }));
+  const s = openGallery(async url => {
+    if (url.includes("/photos?")) return Response.json({ gallery_id: "gallery-test", photos });
+    const id = Number(url.split("/").at(-2).slice(-12));
+    started.push(id);
+    await new Promise(resolve => releases.set(id, resolve));
+    return new Response(new Blob(["preview"]));
+  });
+  await settle();
+  const observer = s.observers[0];
+  for (const [index, frame] of observer.targets.entries()) {
+    frame.getBoundingClientRect = () => index === 5 ? { top: 100, bottom: 400 } : { top: -5000, bottom: -4700 };
+    observer.intersect(frame);
+  }
+  assert.deepEqual(started, [1, 2, 3]);
+  releases.get(1)(); await settle();
+  assert.equal(started[3], 6, "The visible photo must not wait behind the offscreen queue");
+  for (const release of releases.values()) release();
+  await settle();
+  for (const release of releases.values()) release();
+  await settle();
+});
 
 test("full-gallery choices survive pagination and refresh; CSV includes only favourites", async () => {
   const data = new Map([

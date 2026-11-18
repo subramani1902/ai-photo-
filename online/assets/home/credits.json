@@ -1,0 +1,34 @@
+[
+  {
+    "file": "sample-bride.webp",
+    "author": "Axn photography",
+    "sourcePage": "https://unsplash.com/photos/6Vd7vPp5GxQ",
+    "license": "https://unsplash.com/license",
+    "sample": true,
+    "bytes": 110566
+  },
+  {
+    "file": "sample-wedding.webp",
+    "author": "Akash Gurle",
+    "sourcePage": "https://unsplash.com/photos/Al2Kps9hipo",
+    "license": "https://unsplash.com/license",
+    "sample": true,
+    "bytes": 93202
+  },
+  {
+    "file": "sample-celebration.webp",
+    "author": "ANAND TYAGI",
+    "sourcePage": "https://unsplash.com/photos/N1M-gAhFUrg",
+    "license": "https://unsplash.com/license",
+    "sample": true,
+    "bytes": 137568
+  },
+  {
+    "file": "sample-together.webp",
+    "author": "Alexander Mass",
+    "sourcePage": "https://unsplash.com/photos/-eNJJPQIKbY",
+    "license": "https://unsplash.com/license",
+    "sample": true,
+    "bytes": 108818
+  }
+]

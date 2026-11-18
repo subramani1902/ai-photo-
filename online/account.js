@@ -9,6 +9,23 @@ const signIn = $("#sign-in"), signedIn = $("#signed-in"), signOut = $("#sign-out
 const modeButtons = [$("#mode-sign-in"), $("#mode-register")];
 const gallery = createClientGallery({ client, onClose: () => $(".account-intro").hidden = false });
 let busy = true, mode = "sign-in", verificationPending = false;
+let adminProbe = 0;
+
+async function showAdminTools(user) {
+  const version = ++adminProbe, link = $("#studio-admin-tools");
+  link.hidden = true;
+  if (!user?.emailVerified) return;
+  try {
+    const { default: config } = await import("./firebase-config.js");
+    const base = new URL(config.photoApiBaseUrl);
+    if (base.protocol !== "https:" || base.username || base.password || base.pathname !== "/" || base.search || base.hash) return;
+    const token = await client.getIdToken();
+    const response = await fetch(base.origin + "/api/firebase/homepage/admin", {
+      headers: { Authorization: "Bearer " + token }, cache: "no-store", signal: AbortSignal.timeout(8000),
+    });
+    if (version === adminProbe && response.ok) link.hidden = false;
+  } catch { /* Client gallery sign-in remains usable when studio management is offline. */ }
+}
 
 function setBusy(value) {
   busy = value;
@@ -49,6 +66,7 @@ async function showAccount() {
   $("#email-verification").hidden = !verificationPending;
   $("#event-form").hidden = verificationPending;
   password.value = confirmation.value = "";
+  void showAdminTools(user);
   return user;
 }
 

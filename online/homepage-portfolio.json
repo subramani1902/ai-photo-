@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "photos": [
+    {
+      "id": "celebration",
+      "title": "The joy of being together",
+      "category": "celebrations",
+      "label": "Celebrations",
+      "image": "./assets/home/sample-celebration.webp",
+      "alt": "Sample wedding portrait of a couple in traditional dress",
+      "position": "50% 40%",
+      "sample": true
+    },
+    {
+      "id": "bride",
+      "title": "A moment, just for you",
+      "category": "weddings",
+      "label": "Wedding portraits",
+      "image": "./assets/home/sample-bride.webp",
+      "alt": "Sample monochrome bridal portrait with traditional jewellery",
+      "position": "50% 45%",
+      "sample": true
+    },
+    {
+      "id": "wedding",
+      "title": "All the beautiful chaos",
+      "category": "weddings",
+      "label": "Candid moments",
+      "image": "./assets/home/sample-wedding.webp",
+      "alt": "Sample candid photograph of a groom celebrating with guests",
+      "position": "50% 50%",
+      "sample": true
+    },
+    {
+      "id": "together",
+      "title": "Just the two of you",
+      "category": "pre-weddings",
+      "label": "Pre-weddings",
+      "image": "./assets/home/sample-together.webp",
+      "alt": "Sample couple portrait in warm evening sunlight",
+      "position": "50% 45%",
+      "sample": true
+    }
+  ]
+}

@@ -13,6 +13,8 @@ const exportButton = $("#export-favourites"), favouriteFilter = $("#favourite-fi
 const assetQueue = [];
 const queuedPhotos = new Map();
 const cards = new Map(), favourites = new Map(), previewUrls = new Set();
+const previewCache = new Map();
+const MAX_CACHED_PREVIEWS = 120;
 const folderGrids = new Map();
 let activeAssets = 0;
 let shareToken = location.hash.slice(1) || sessionStorage.getItem("photo-finder-gallery-token") || "";
@@ -51,8 +53,32 @@ function resetAssets() {
   requestsController.abort(); requestsController = new AbortController();
   assetQueue.length = 0; queuedPhotos.clear(); cards.clear(); folderGrids.clear();
   photoObserver?.disconnect();
-  for (const url of previewUrls) URL.revokeObjectURL(url);
+  const retained = new Set(previewCache.values());
+  for (const url of previewUrls) if (!retained.has(url)) URL.revokeObjectURL(url);
   previewUrls.clear();
+}
+
+function clearPreviewCache() {
+  for (const url of previewCache.values()) URL.revokeObjectURL(url);
+  previewCache.clear();
+}
+
+function previewKey(photo) { return (galleryContext.gallery_id || "") + ":" + photo.id; }
+
+function rememberPreview(photo, url) {
+  if (!galleryContext.gallery_id) return;
+  if (previewCache.size >= MAX_CACHED_PREVIEWS) {
+    for (const [key, previous] of previewCache) {
+      if (!previewUrls.has(previous)) { URL.revokeObjectURL(previous); previewCache.delete(key); break; }
+    }
+  }
+  if (previewCache.size < MAX_CACHED_PREVIEWS) previewCache.set(previewKey(photo), url);
+}
+
+function showPreview(frame, placeholder, url) {
+  const image = frame.querySelector("img");
+  previewUrls.add(url); image.src = url; image.hidden = false;
+  frame.dataset.previewState = "ready"; placeholder.remove();
 }
 
 function persistFavourites() {
@@ -77,6 +103,7 @@ function updateFavourites() {
 }
 
 function applyContext(result) {
+  if (galleryContext.gallery_id && galleryContext.gallery_id !== result.gallery_id) clearPreviewCache();
   galleryContext = result;
   if (typeof result.event_name === "string") $("#gallery-title").textContent = result.event_name;
   if (typeof result.gallery_id === "string" && result.gallery_id !== selectionKey.replace("gallery-favourites:", "")) {
@@ -93,6 +120,7 @@ function authHeaders() {
 }
 
 function clearSession() {
+  clearPreviewCache();
   resetAssets(); favourites.clear(); selectionKey = ""; galleryContext = {};
   sessionToken = "";
   sessionStorage.removeItem("photo-finder-gallery-session");
@@ -101,6 +129,7 @@ function clearSession() {
 }
 
 async function readResponse(response) {
+  if (response.status === 403) clearPreviewCache();
   if (response.status === 401 && sessionToken) {
     clearSession();
     galleryPanel.hidden = true;
@@ -207,6 +236,7 @@ function addPhoto(photo) {
   placeholder.textContent = "Preview loads when visible";
   const image = document.createElement("img");
   image.alt = photo.filename;
+  image.decoding = "async";
   image.hidden = true;
   frame.dataset.previewState = "waiting";
   frame.append(placeholder, image);
@@ -246,17 +276,16 @@ function queueThumbnail(frame) {
   const { photo, placeholder } = item;
   queuedPhotos.delete(frame);
   const version = generation;
-  assetQueue.push(async () => {
+  const cached = previewCache.get(previewKey(photo));
+  if (cached) { showPreview(frame, placeholder, cached); return; }
+  assetQueue.push({ frame, run: async () => {
     try {
       frame.dataset.previewState = "loading";
       placeholder.textContent = "Loading preview…";
       const blob = await fetchPhoto(photo, "thumbnail");
       if (version !== generation) return;
-      const image = frame.querySelector("img");
-      const url = URL.createObjectURL(blob); previewUrls.add(url); image.src = url;
-      image.hidden = false;
-      frame.dataset.previewState = "ready";
-      placeholder.remove();
+      const url = URL.createObjectURL(blob);
+      showPreview(frame, placeholder, url); rememberPreview(photo, url);
     } catch (error) {
       if (version !== generation) return;
       frame.dataset.previewState = "error";
@@ -269,15 +298,23 @@ function queueThumbnail(frame) {
       });
       frame.append(retry);
     }
-  });
+  } });
   pumpQueue();
 }
 
 function pumpQueue() {
+  const distance = ({ frame }) => {
+    const rect = frame.getBoundingClientRect?.();
+    const height = window.innerHeight || 0;
+    if (!rect || !height) return 0;
+    return rect.bottom < 0 ? height - rect.bottom : rect.top > height ? rect.top : 0;
+  };
+  // Scrolling must not leave visible photos behind a long queue of offscreen previews.
+  assetQueue.sort((a, b) => distance(a) - distance(b));
   while (activeAssets < 3 && assetQueue.length) {
     const operation = assetQueue.shift();
     activeAssets++;
-    operation().finally(() => {
+    operation.run().finally(() => {
       activeAssets--;
       pumpQueue();
     });
@@ -323,9 +360,21 @@ async function createPhotoJob(photo, variant, signal) {
 
 async function fetchPhoto(photo, variant) {
   const signal = requestsController.signal;
+  if (variant === "thumbnail" && /^[a-f0-9-]{36}$/i.test(photo.preview_job_id || "")) {
+    try {
+      return (await readGalleryFile(`${RELAY}/guest/gallery/jobs/${encodeURIComponent(photo.preview_job_id)}/file`, signal)).blob();
+    } catch (error) {
+      if (![404, 409].includes(error.status)) throw error;
+      photo.preview_job_id = null;
+    }
+  }
   for (let recovery = 0; recovery < 3; recovery++) {
     const created = await createPhotoJob(photo, variant, signal);
     const job = await created.json();
+    if (job.status === "ready") {
+      try { return (await readGalleryFile(`${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}/file`, signal)).blob(); }
+      catch (error) { if (![404, 409].includes(error.status) || recovery === 2) throw error; continue; }
+    }
     for (let attempt = 0; attempt < 400; attempt++) {
       signal.throwIfAborted();
       if (attempt) await waitForRetry(1500, signal);
@@ -449,7 +498,7 @@ exportButton.addEventListener("click", async () => {
   } catch (error) { galleryMessage.textContent = error.message; }
   finally { exporting = false; updateFavourites(); }
 });
-window.addEventListener("pagehide", resetAssets);
+window.addEventListener("pagehide", () => { clearPreviewCache(); resetAssets(); });
 
 if (sessionToken && shareToken) {
   startGallery().catch((error) => {

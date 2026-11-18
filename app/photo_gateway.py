@@ -1,4 +1,4 @@
-"""Small, authenticated Cloudflare origin. Does not expose legacy/admin/photo paths."""
+"""Authenticated Cloudflare origin; legacy administrator and photo paths stay local."""
 
 import os
 from urllib.parse import urlsplit
@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.client_events import router as client_events_router
 from app.api.firebase_auth import router as firebase_auth_router
+from app.api.homepage import router as homepage_router
 from app.core.firebase_config import PROJECT_ROOT
 from dotenv import load_dotenv
 
@@ -52,3 +53,4 @@ def health():
 
 app.include_router(firebase_auth_router)
 app.include_router(client_events_router)
+app.include_router(homepage_router)

@@ -251,10 +251,17 @@ class RelayWorker:
                 })
         LOG.info("Synchronized %d gallery photos", len(rows))
 
-    def process_gallery_once(self):
+    def claim_gallery_job(self):
         job = self.request("POST", "/worker/gallery/claim").json().get("job")
+        return job
+
+    def process_gallery_once(self):
+        job = self.claim_gallery_job()
         if not job:
             return False
+        return self.process_gallery_job(job)
+
+    def process_gallery_job(self, job):
         job_id = str(UUID(str(job["id"])))
         lease = str(UUID(str(job["lease"])))
         photo_id = job.get("photo_id")

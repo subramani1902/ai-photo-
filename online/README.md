@@ -1,5 +1,23 @@
 # Online event-photo prototype
 
+The studio homepage is `/`. The existing guest photo finder is now
+`/find-photos.html`; client accounts and password galleries remain at
+`/account.html` and `/gallery.html`. Existing event QR URLs containing `token`
+in the root query string or fragment forward to the finder without losing it.
+
+The homepage uses explicitly labelled sample photographs. To publish approved
+studio photographs, add optimized public images in `assets/home/`, update
+`homepage-content.mjs` (image, alt text, category, sample flag and optional
+Instagram post URL), and replace the initial hero image URLs in `index.html`
+with the same two first portfolio entries for fast initial rendering. Private
+gallery images, originals and embeddings must never be added to public assets.
+Sample attribution and source links are in `assets/home/credits.json` and the
+footer. Keep credits for any sample images still in use.
+
+Package prices are quoted individually. Enquiries are reviewed on the page,
+then opened as an unsent WhatsApp draft to the existing studio phone number.
+The homepage does not store contact details or automatically send messages.
+
 The public guest website is hosted separately from the event laptop. The
 Supabase relay accepts a guest selfie, the laptop worker searches the local
 event index, and matched photos are transferred to private temporary storage.
