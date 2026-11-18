@@ -140,6 +140,17 @@ async function startGallery() {
   await loadPage();
 }
 
+async function readGalleryFile(url, signal) {
+  for (let retry = 0; ; retry++) {
+    try { return await readResponse(await fetch(url, { headers: authHeaders(), signal, cache: "no-store" })); }
+    catch (error) {
+      signal.throwIfAborted();
+      if (retry >= 4 || !([408, 429, 500, 502, 503, 504].includes(error.status) || error instanceof TypeError)) throw error;
+      await waitForRetry(Math.min(1000 * 2 ** retry, 8000), signal);
+    }
+  }
+}
+
 async function loadPage() {
   if (loadingPage) return;
   loadingPage = true;
@@ -194,6 +205,7 @@ function addPhoto(photo) {
   const image = document.createElement("img");
   image.alt = photo.filename;
   image.hidden = true;
+  frame.dataset.previewState = "waiting";
   frame.append(placeholder, image);
   const details = document.createElement("div");
   details.className = "photo-details";
@@ -233,15 +245,26 @@ function queueThumbnail(frame) {
   const version = generation;
   assetQueue.push(async () => {
     try {
+      frame.dataset.previewState = "loading";
       placeholder.textContent = "Loading preview…";
       const blob = await fetchPhoto(photo, "thumbnail");
       if (version !== generation) return;
       const image = frame.querySelector("img");
       const url = URL.createObjectURL(blob); previewUrls.add(url); image.src = url;
       image.hidden = false;
+      frame.dataset.previewState = "ready";
       placeholder.remove();
     } catch (error) {
-      if (version === generation) placeholder.textContent = error.message || "Preview unavailable. Refresh to try again.";
+      if (version !== generation) return;
+      frame.dataset.previewState = "error";
+      placeholder.textContent = error.message || "Preview temporarily unavailable.";
+      const retry = document.createElement("button"); retry.type = "button";
+      retry.className = "preview-retry"; retry.textContent = "Retry preview";
+      retry.setAttribute("aria-label", "Retry preview for " + photo.filename);
+      retry.addEventListener("click", () => {
+        retry.remove(); queuedPhotos.set(frame, { photo, placeholder }); queueThumbnail(frame);
+      });
+      frame.append(retry);
     }
   });
   pumpQueue();
@@ -285,7 +308,8 @@ async function createPhotoJob(photo, variant, signal) {
         signal,
       }));
     } catch (error) {
-      if (error.status !== 429 || retry >= 8) throw error;
+      signal.throwIfAborted();
+      if (retry >= 6 || !([408, 429, 500, 502, 503, 504].includes(error.status) || error instanceof TypeError)) throw error;
       const delay = error.retryAfter
         ? error.retryAfter * 1000
         : Math.min(2000 * (2 ** retry), 15_000);
@@ -302,23 +326,24 @@ async function fetchPhoto(photo, variant) {
     for (let attempt = 0; attempt < 400; attempt++) {
       signal.throwIfAborted();
       if (attempt) await waitForRetry(1500, signal);
-      const statusResponse = await readResponse(await fetch(
+      const statusResponse = await readGalleryFile(
         `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}`,
-        { headers: authHeaders(), signal },
-      ));
+        signal,
+      );
       const status = (await statusResponse.json()).status;
-      if (status === "failed" || status === "expired") {
+      if (status === "expired") break;
+      if (status === "failed") {
         throw new Error("This photo is temporarily unavailable. Please try again later.");
       }
       if (status !== "ready") continue;
       try {
-        const fileResponse = await readResponse(await fetch(
+        const fileResponse = await readGalleryFile(
           `${RELAY}/guest/gallery/jobs/${encodeURIComponent(job.job_id)}/file`,
-          { headers: authHeaders(), signal },
-        ));
+          signal,
+        );
         return fileResponse.blob();
       } catch (error) {
-        if (error.status !== 409 || recovery === 2) throw error;
+        if (![404, 409].includes(error.status) || recovery === 2) throw error;
         break;
       }
     }

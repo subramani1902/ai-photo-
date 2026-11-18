@@ -76,6 +76,9 @@ button { font: inherit; cursor: pointer; }
 .photo-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
 .photo-frame { display: grid; min-height: 180px; place-items: center; overflow: hidden; background: #ebe8e0; color: var(--muted); font-size: 13px; }
 .photo-frame img { display: block; width: 100%; height: 250px; object-fit: cover; }
+.photo-frame { height: 250px; }
+.photo-frame img[hidden] { display: none; }
+.preview-retry { border: 1px solid var(--accent); border-radius: 7px; padding: 8px 14px; background: var(--card); color: var(--accent); }
 .photo-details { display: grid; gap: 10px; padding: 12px; }
 .filename { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .download { width: 100%; min-height: 38px; background: var(--accent); font-size: 13px; }
@@ -95,10 +98,12 @@ button { font: inherit; cursor: pointer; }
   main { margin-top: 36px; }
   .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .photo-frame img { height: 190px; }
+  .photo-frame { height: 190px; }
   .panel { padding: 26px 22px; }
 }
 
 @media (max-width: 430px) {
   .photo-grid { grid-template-columns: 1fr; }
   .photo-frame img { height: 260px; }
+  .photo-frame { height: 260px; }
 }

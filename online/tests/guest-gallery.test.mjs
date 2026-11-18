@@ -53,8 +53,9 @@ test("actual guest page reveals partial results, keeps filters and enables downl
     if (path.endsWith("/photos/a") || path.endsWith("/photos/b")) return new Response(new Blob(["synthetic"], { type: "image/jpeg" }));
     polls++;
     return Response.json(polls === 1 ? { status: "pending", photos: [] }
-      : polls === 2 ? { status: "processing", photos_detected: 2, photos: [a] }
-        : { status: "completed", photos_detected: 2, photos: [a, b] });
+      : polls === 2 ? { status: "processing", photos_detected: 0, photos: [] }
+        : polls === 3 ? { status: "processing", photos_detected: 2, photos: [a] }
+          : { status: "completed", photos_detected: 2, photos: [a, b] });
   };
   const code = (await readFile(new URL("../main.js", import.meta.url), "utf8")).replace(/^import [^\n]+;\r?\n/gm, "");
   vm.runInNewContext(code, {
@@ -65,7 +66,15 @@ test("actual guest page reveals partial results, keeps filters and enables downl
     requestRelay: request,
     followRelaySearch: options => followRelaySearch({ ...options, wait: async () => {
       await setImmediate();
-      if (polls !== 2) return;
+      if (polls === 1) {
+        assert.equal(element("#photos-detected").textContent, "0");
+        return;
+      }
+      if (polls === 2) {
+        assert.equal(element("#photos-detected").textContent, "0");
+        return;
+      }
+      if (polls !== 3) return;
       sawPartial = true;
       assert.equal(element("#results").hidden, false);
       assert.equal(element("#form-section").hidden, true);

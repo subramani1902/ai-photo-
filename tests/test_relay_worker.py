@@ -87,6 +87,41 @@ class RelayWorkerTests(unittest.TestCase):
                             for photo in manifest))
         self.assertEqual(sorted(value for kind, value in requests_sent if kind == "upload"), ["12", "13"])
 
+    def test_next_upload_starts_when_a_slot_frees_instead_of_waiting_for_batch(self):
+        slow_upload_started, release_slow_upload, fifth_upload_started = Event(), Event(), Event()
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / "photo.jpg"
+            source.write_bytes(b"guest photo")
+            matches = [
+                {"photo_id": photo_id, "filename": source.name, "path": source,
+                 "similarity": 0.9, "face_count": 1}
+                for photo_id in range(1, 6)
+            ]
+
+            def request(method, path, **kwargs):
+                if path.endswith("/results"):
+                    photo_id = int(kwargs["data"]["photo_id"])
+                    if photo_id == 1:
+                        slow_upload_started.set()
+                        self.assertTrue(release_slow_upload.wait(3))
+                    elif photo_id == 5:
+                        fifth_upload_started.set()
+                return self.respond(method, path, **kwargs)
+
+            with patch.object(self.worker, "request", side_effect=request), \
+                    patch("app.services.relay_worker.find_event_matches", return_value=matches), \
+                    ThreadPoolExecutor(max_workers=1) as executor:
+                delivery = executor.submit(self.worker.process_once)
+                try:
+                    self.assertTrue(slow_upload_started.wait(3))
+                    self.assertTrue(
+                        fifth_upload_started.wait(3),
+                        "A completed upload slot should start the next photo immediately",
+                    )
+                finally:
+                    release_slow_upload.set()
+                self.assertTrue(delivery.result(timeout=3))
+
     def test_zero_matches_are_reported_before_completion(self):
         with patch.object(self.worker, "request", side_effect=self.respond) as send, \
                 patch("app.services.relay_worker.find_event_matches", return_value=[]):

@@ -9,7 +9,7 @@ import mimetypes
 import os
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -469,19 +469,30 @@ class RelayWorker:
                                 },
                             )
 
-                for start in range(0, len(matches), RESULT_UPLOAD_WORKERS):
-                    check_lease()
-                    batch = matches[start:start + RESULT_UPLOAD_WORKERS]
-                    with ThreadPoolExecutor(max_workers=RESULT_UPLOAD_WORKERS) as executor:
-                        futures = [executor.submit(upload_match, match) for match in batch]
-                        for future in as_completed(futures):
+                match_iter = iter(matches)
+                uploaded_count = 0
+                with ThreadPoolExecutor(max_workers=RESULT_UPLOAD_WORKERS) as executor:
+                    pending = {
+                        executor.submit(upload_match, match)
+                        for _, match in zip(range(RESULT_UPLOAD_WORKERS), match_iter)
+                    }
+                    while pending:
+                        completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in completed:
                             future.result()
                             check_lease()
-                    LOG.info(
-                        "Uploaded %d/%d matched photos",
-                        min(start + len(batch), len(matches)),
-                        len(matches),
-                    )
+                            uploaded_count += 1
+                            try:
+                                next_match = next(match_iter)
+                            except StopIteration:
+                                continue
+                            pending.add(executor.submit(upload_match, next_match))
+                        if uploaded_count % RESULT_UPLOAD_WORKERS == 0 or uploaded_count == len(matches):
+                            LOG.info(
+                                "Uploaded %d/%d matched photos",
+                                uploaded_count,
+                                len(matches),
+                            )
                 check_lease()
                 self.request("POST", f"/worker/jobs/{job_id}/complete", headers=headers, retry_safe=True)
                 LOG.info("Finished request %s with %d new matches in %.1fs",

@@ -478,14 +478,14 @@ Deno.serve(async (req) => {
         .select("id", { count: "exact", head: true })
         .eq("gallery_id", gallery.id)
         .gt("expires_at", now)
-        .in("status", ["pending", "processing", "ready"]);
+        .or("status.in.(pending,processing),and(status.eq.ready,variant.eq.original)");
       check(activeJobs);
       if ((activeJobs.count || 0) >= 8) fail("The gallery is busy. Please wait for photos to finish loading.", 429);
       const eventJobs = await db.from("photo_finder_gallery_jobs")
         .select("id", { count: "exact", head: true })
         .eq("event_id", gallery.event_id)
         .gt("expires_at", now)
-        .in("status", ["pending", "processing", "ready"]);
+        .or("status.in.(pending,processing),and(status.eq.ready,variant.eq.original)");
       check(eventJobs);
       if ((eventJobs.count || 0) >= 12) fail("The gallery is busy. Please wait for photos to finish loading.", 429);
       const inserted = await db.from("photo_finder_gallery_jobs").insert({
@@ -522,6 +522,7 @@ Deno.serve(async (req) => {
       if (!job) fail("Photo request not found", 404);
       if (!galleryJobMatch[2]) return json({ status: job.status });
       if (job.status !== "ready" || !job.object_path) fail("Photo is not ready", 409);
+      if (job.variant === "original") {
       const consumed = check(await db.from("photo_finder_gallery_jobs")
         .update({ status: "expired" })
         .eq("id", job.id)
@@ -530,14 +531,17 @@ Deno.serve(async (req) => {
         .select("id")
         .maybeSingle());
       if (!consumed) fail("Photo was already delivered", 409);
+      }
       const image = check(await db.storage.from(bucket).download(job.object_path));
       if (!image) fail("Photo is no longer available", 404);
+      if (job.variant === "original") {
       check(await db.storage.from(bucket).remove([job.object_path]));
       check(await db.from("photo_finder_gallery_jobs")
         .update({ object_path: null })
         .eq("id", job.id)
         .eq("gallery_id", gallery.id)
         .eq("status", "expired"));
+      }
       const headers: Record<string, string> = {
         ...cors,
         "Cache-Control": "no-store",
