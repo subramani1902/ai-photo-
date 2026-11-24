@@ -4,9 +4,10 @@ from threading import Lock
 from time import monotonic
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies.firebase_auth import get_current_firebase_principal
 from app.services.homepage_content import has_website_permission
@@ -115,12 +116,16 @@ def update_packages(update: PackageUpdate, access=Depends(studio_only)):
     return result
 
 
-@router.get("/admin/clients")
-def list_clients(search: Annotated[str, Query(max_length=100)] = "",
-                 after: Annotated[str | None, Query(pattern=f"^{RECORD_ID}$")] = None,
-                 access=Depends(studio_only)):
+class ClientSearch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    search: str = Field(default="", max_length=100)
+    after: str | None = Field(default=None, pattern=f"^{RECORD_ID}$")
+
+
+@router.post("/admin/clients/search")
+def list_clients(query: ClientSearch, access=Depends(studio_only)):
     try:
-        return access[0].list_clients(search_term(search)[:100], after)
+        return access[0].list_clients(search_term(query.search)[:100], query.after)
     except StudioError:
         raise
     except Exception:

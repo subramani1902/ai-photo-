@@ -1,6 +1,7 @@
 import { studio } from "./homepage-content.mjs";
+import { weddingPackages } from "./studio-packages.mjs";
 
-export const packageNames = Object.freeze(["Wedding & reception", "Pre-wedding", "Celebration", "Help me choose"]);
+export const packageNames = Object.freeze(["Wedding & reception", "Pre-wedding", "Celebration", "Help me choose", ...Object.values(weddingPackages)]);
 
 function line(value, maximum, label, required = false) {
   const result = String(value ?? "").replace(/\s+/gu, " ").trim();
@@ -26,6 +27,7 @@ export function createEnquiryDraft(fields) {
     "Hello SM Photography! I'd like to enquire about a shoot.", "",
     `Name: ${name}`, `Phone: ${phone}`, `Coverage: ${selectedPackage}`,
     `Event date: ${date || "Still deciding"}`, `Venue / city: ${place}`,
+    ...(String(fields.source).toLowerCase() === "instagram" ? ["Found you via Instagram."] : []),
     ...(notes ? [`A little about our plans: ${notes}`] : []), "",
     "Please share availability and a tailored package quote. Thank you!",
   ].join("\n");

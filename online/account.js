@@ -1,5 +1,6 @@
 import { createFirebaseClient } from "./firebase-client.js";
 import { createClientGallery } from "./client-event-gallery.js";
+import { trustedPhotoApiOrigin } from "./studio-packages.mjs";
 
 const client = createFirebaseClient({ context: "client" });
 const $ = selector => document.querySelector(selector);
@@ -17,10 +18,10 @@ async function showAdminTools(user) {
   if (!user?.emailVerified) return;
   try {
     const { default: config } = await import("./firebase-config.js");
-    const base = new URL(config.photoApiBaseUrl);
-    if (base.protocol !== "https:" || base.username || base.password || base.pathname !== "/" || base.search || base.hash) return;
+    const origin = trustedPhotoApiOrigin(config.photoApiBaseUrl);
+    if (!origin) return;
     const token = await client.getIdToken();
-    const response = await fetch(base.origin + "/api/firebase/homepage/admin", {
+    const response = await fetch(origin + "/api/studio/access", {
       headers: { Authorization: "Bearer " + token }, cache: "no-store", signal: AbortSignal.timeout(8000),
     });
     if (version === adminProbe && response.ok) link.hidden = false;

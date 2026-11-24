@@ -1,5 +1,6 @@
 import { loadPublishedPortfolio } from "./homepage-content.mjs";
 import { createEnquiryDraft } from "./enquiry.mjs";
+import { formatRupees, loadWeddingPackages, weddingPackages } from "./studio-packages.mjs";
 
 const $ = selector => document.querySelector(selector);
 const grid = $("#portfolio-grid"), preview = $("#portfolio-preview");
@@ -61,20 +62,21 @@ preview.addEventListener("click", event => { if (event.target === preview) previ
 
 const form = $("#enquiry-form"), review = $("#enquiry-review"), status = $("#enquiry-status");
 const motion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
-for (const button of document.querySelectorAll("[data-enquire]")) {
-  button.addEventListener("click", () => {
+$("#packages").addEventListener("click", event => {
+    const button = event.target.closest("[data-enquire]");
+    if (!button) return;
     $("#enquiry-package").value = button.dataset.enquire;
     form.hidden = false; review.hidden = true; status.textContent = "";
     $("#enquire").scrollIntoView({ behavior: motion(), block: "start" });
     $("#enquiry-name").focus({ preventScroll: true });
-  });
-}
+});
 form.addEventListener("submit", event => {
   event.preventDefault(); status.textContent = "";
   if (!form.reportValidity()) return;
   try {
     const fields = Object.fromEntries(new FormData(form));
-    const draft = createEnquiryDraft(fields);
+    const source = new URLSearchParams(location.search).get("utm_source");
+    const draft = createEnquiryDraft({ ...fields, source });
     $("#enquiry-draft").textContent = draft.message;
     $("#send-enquiry").href = draft.url;
     form.hidden = true; review.hidden = false;
@@ -86,3 +88,61 @@ $("#edit-enquiry").addEventListener("click", () => {
   review.hidden = true; form.hidden = false; status.textContent = "";
   $("#enquiry-name").focus({ preventScroll: true });
 });
+
+async function showWeddingPackages() {
+  const grid = $("#wedding-package-grid");
+  try {
+    const { packages, brochure } = await loadWeddingPackages();
+    const cards = document.createDocumentFragment();
+    for (const [key, name] of Object.entries(weddingPackages)) {
+      const details = packages[key];
+      const card = document.createElement("article");
+      card.className = key === "platinum" ? "package package-featured wedding-card" : "package wedding-card";
+      const title = document.createElement("h4"), price = document.createElement("p");
+      title.textContent = name;
+      price.className = "wedding-price";
+      price.textContent = details.starting_paise == null ? "Quote on enquiry" : formatRupees(details.starting_paise);
+      card.append(title, price);
+      if (details.description) {
+        const description = document.createElement("p");
+        description.textContent = details.description;
+        card.append(description);
+      }
+      const inclusions = document.createElement("ul");
+      for (const line of details.inclusions.split(/\r?\n/).map(line => line.trim()).filter(Boolean)) {
+        const item = document.createElement("li");
+        item.textContent = line;
+        inclusions.append(item);
+      }
+      if (inclusions.childElementCount) card.append(inclusions);
+      if (details.deposit_paise != null || details.payment_terms) {
+        const terms = document.createElement("div");
+        terms.className = "wedding-terms";
+        if (details.deposit_paise != null) {
+          const deposit = document.createElement("p");
+          deposit.textContent = "Booking deposit " + formatRupees(details.deposit_paise);
+          terms.append(deposit);
+        }
+        if (details.payment_terms) {
+          const copy = document.createElement("p");
+          copy.textContent = details.payment_terms;
+          terms.append(copy);
+        }
+        card.append(terms);
+      }
+      const contact = document.createElement("button");
+      contact.className = "package-link";
+      contact.type = "button";
+      contact.dataset.enquire = name;
+      contact.textContent = "Enquire about " + name;
+      card.append(contact);
+      cards.append(card);
+    }
+    grid.replaceChildren(cards);
+    if (brochure) $("#wedding-package-status").textContent = "Brochure prices shown. Contact the studio to confirm current rates.";
+  } catch {
+    $("#wedding-package-status").textContent = "Package details are temporarily unavailable. Ask the studio about Silver, Gold and Platinum.";
+  }
+}
+
+showWeddingPackages();

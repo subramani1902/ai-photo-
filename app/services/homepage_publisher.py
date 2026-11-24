@@ -24,6 +24,8 @@ PUBLIC_FILES = (
     "favicon.svg", "favicon.webp", "camera-aperture.svg", "camera-aperture-static.svg", "sm-photography-logo.png",
     "vercel.json", "package.json", "find-photos.html", "homepage.css", "homepage.js", "homepage-content.mjs",
     "homepage-portfolio.json", "legacy-photo-route.js", "enquiry.mjs", "admin.html", "homepage-admin.js", "homepage-admin.css",
+    "studio-packages.mjs", "studio-packages.json", "admin/index.html", "admin/studio.css", "admin/studio.js",
+    "admin/clients.js", "admin/packages.js", "admin/forms.js",
 )
 SAMPLE_FILES = ("sample-bride.webp", "sample-wedding.webp", "sample-celebration.webp", "sample-together.webp", "credits.json")
 LOG = logging.getLogger(__name__)
@@ -58,7 +60,9 @@ def prepare_public_stage(source, stage, config, rendition_root=None):
         path = (source / name).resolve()
         if not path.is_relative_to(source) or path.is_symlink() or not path.is_file():
             raise HomepageError("A required public website file is missing.", 503)
-        shutil.copyfile(path, destination / name)
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
     for name in SAMPLE_FILES:
         target = destination / "assets/home" / name
         target.parent.mkdir(parents=True, exist_ok=True)

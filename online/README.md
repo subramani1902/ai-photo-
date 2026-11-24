@@ -14,9 +14,39 @@ gallery images, originals and embeddings must never be added to public assets.
 Sample attribution and source links are in `assets/home/credits.json` and the
 footer. Keep credits for any sample images still in use.
 
-Package prices are quoted individually. Enquiries are reviewed on the page,
-then opened as an unsent WhatsApp draft to the existing studio phone number.
-The homepage does not store contact details or automatically send messages.
+The homepage shows the Silver, Gold, and Platinum wedding packages from the
+studio brochure. Clients can review an enquiry and open it as a WhatsApp draft
+to the studio. Links with `?utm_source=instagram` identify Instagram enquiries
+in that draft.
+
+## Studio admin
+
+Open `/admin/index.html` and sign in with an approved, verified Firebase account.
+Deploy the updated `online/` website and restart the existing studio photo
+gateway with the updated application code to make the admin tools available.
+The site uses the same `FIREBASE_PHOTO_API_URL` and allowed website origin as the
+client account.
+
+Homepage photo access uses the existing `manage_homepage` permission. Client
+and package management uses a separate grant. From the repository root, run
+the grant command for the approved staff email and add `--apply` to activate it.
+Use `--studio --revoke --apply` with the same email to revoke it.
+
+```powershell
+.\venv\Scripts\python.exe -m utilities.grant_homepage_admin --studio --email STAFF_EMAIL
+.\venv\Scripts\python.exe -m utilities.grant_homepage_admin --studio --email STAFF_EMAIL --apply
+```
+
+- **Clients** records contact information, Instagram leads, bookings, follow-up
+  dates, agreed quotes and payments received. Add enquiries from Instagram or
+  WhatsApp as client records. Booking payments are entered by staff and balances
+  are calculated from the recorded amounts.
+- **Packages & payments** edits the public package price, inclusions, booking
+  deposit, and terms. Use the studio gateway to serve saved rates. When the site
+  cannot reach it, the homepage identifies the brochure prices as a reference.
+- **Homepage photos** edits the existing portfolio positions, captions,
+  descriptions, framing, and Instagram post links. Save drafts, then publish
+  them through the existing homepage publisher.
 
 The public guest website is hosted separately from the event laptop. The
 Supabase relay accepts a guest selfie, the laptop worker searches the local

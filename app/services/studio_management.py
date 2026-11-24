@@ -5,8 +5,6 @@ from functools import cache
 import re
 from typing import Annotated, Literal
 
-from google.cloud import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.firebase import get_firestore_client
@@ -149,6 +147,9 @@ class StudioStore:
         return {"revision": self.save(self.packages, details, update.revision, uid), **details}
 
     def list_clients(self, term, after):
+        from google.cloud import firestore
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
         query = self.clients
         if term:
             query = query.where(filter=FieldFilter("search_prefixes", "array_contains", term))
@@ -182,6 +183,8 @@ class StudioStore:
         return {"id": record_id, "revision": revision, **details}
 
     def save(self, reference, details, revision, uid, *, search=None):
+        from google.cloud import firestore
+
         @firestore.transactional
         def write(transaction):
             previous = reference.get(transaction=transaction).to_dict() or {}
