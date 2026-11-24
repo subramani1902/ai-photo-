@@ -183,3 +183,54 @@ class StudioManagementTests(unittest.TestCase):
             self.store.save_client(record_id, update, self.actor.uid)
             self.assertEqual(self.store.read_client(record_id)["invoice"], issued["invoice"])
             self.assertEqual(self.store.read_client(record_id)["name"], "Updated client")
+
+    def test_payment_link_is_private_to_staff_and_client_view_contains_only_payment_details(self):
+        record_id, token = "1" * 32, "a" * 43
+        url = f"/api/studio/admin/clients/{record_id}/payment-link"
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.sign_in(photos=True)
+        self.assertEqual(self.client.post(url).status_code, 403)
+        self.sign_in(studio_access=True)
+        payment = {"invoice_number": "INV-2026-0001", "balance_paise": 3_000_000, "upi_id": "studio@upi"}
+        with patch.object(self.store, "issue_payment_link", return_value={**payment, "token": token}) as issue, \
+                patch.object(self.store, "revoke_payment_link") as revoke:
+            self.assertEqual(self.client.post(url).json(), {**payment, "token": token})
+            issue.assert_called_once_with(record_id, self.actor.uid)
+            self.assertEqual(self.client.post(url + "/revoke", json={"token": token}).status_code, 200)
+            revoke.assert_called_once_with(record_id, token)
+        app.dependency_overrides.clear()
+        with patch.object(self.store, "read_payment_link", return_value=payment) as read:
+            self.assertEqual(self.client.post("/api/studio/invoice-payment", json={"token": "short"}).status_code, 422)
+            response = self.client.post("/api/studio/invoice-payment", json={"token": token})
+            self.assertEqual(response.json(), payment)
+            self.assertEqual(response.headers["cache-control"], "private, no-store")
+            read.assert_called_once_with(token)
+
+    def test_payment_links_pin_recipient_reflect_paid_balance_and_can_be_revoked(self):
+        record_id = "1" * 32
+        record = {"invoice": {"number": "INV-2026-0001", "total_paise": 4_500_000, "client_name": "Private name"},
+                  "details": {"payments": [{"amount_paise": 1_500_000}], "phone": "private"}}
+        reference = self.store.clients.document.return_value
+        reference.get.side_effect = lambda **_: SimpleNamespace(to_dict=lambda: deepcopy(record))
+        self.store.upi_settings.get.return_value.to_dict.return_value = {"upi_id": "studio@upi"}
+        self.firestore.transaction.return_value.update.side_effect = lambda _ref, changes: record.update(deepcopy(changes))
+        with patch("google.cloud.firestore.transactional", side_effect=lambda function: function):
+            issued = self.store.issue_payment_link(record_id, self.actor.uid)
+            token = issued["token"]
+            self.assertRegex(token, r"^[A-Za-z0-9_-]{43}$")
+            self.assertEqual(issued["balance_paise"], 3_000_000)
+            self.store.upi_settings.get.return_value.to_dict.return_value = {"upi_id": "new-studio@upi"}
+            self.assertEqual(self.store.issue_payment_link(record_id, self.actor.uid), issued)
+            query = self.store.clients.where.return_value.select.return_value.limit.return_value
+            query.get.return_value = [SimpleNamespace(to_dict=lambda: deepcopy(record))]
+            self.assertEqual(self.store.read_payment_link(token), {"invoice_number": "INV-2026-0001",
+                              "balance_paise": 3_000_000, "upi_id": "studio@upi"})
+            record["details"]["payments"].append({"amount_paise": 3_000_000})
+            self.assertEqual(self.store.read_payment_link(token)["balance_paise"], 0)
+            self.assertIsNone(self.store.read_payment_link(token)["upi_id"])
+            self.store.revoke_payment_link(record_id, token)
+            self.assertIsNone(record["invoice_payment_link"])
+            query.get.return_value = []
+            with self.assertRaises(StudioError) as revoked:
+                self.store.read_payment_link(token)
+            self.assertEqual(revoked.exception.status, 404)

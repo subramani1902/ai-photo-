@@ -45,7 +45,12 @@ Use `--studio --revoke --apply` with the same email to revoke it.
   balances, and a transaction history. Issue one numbered invoice per booking
   and use **Print / PDF** to save or print a copy. Record payments received by
   UPI, bank transfer, card, cash, or another method. Payments entered on a
-  client record also appear in the ledger.
+  client record also appear in the ledger. Use **Pay Balance** to copy a client
+  payment link or open a WhatsApp draft. The page shows the live balance, and
+  clients can launch their UPI app or copy the studio’s UPI ID. After confirming
+  receipt in your bank or UPI app, use **Record payment** with the transaction
+  reference. The same link then shows the updated balance. Use **Revoke link**
+  if it was shared with the wrong person.
 - **Wedding packages** edits the public package price, inclusions, booking
   deposit, and terms. Use the studio gateway to serve saved rates. When the site
   cannot reach it, the homepage identifies the brochure prices as a reference.

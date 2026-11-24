@@ -5,10 +5,11 @@ const $ = selector => document.querySelector(selector);
 const label = value => value[0].toUpperCase() + value.slice(1);
 const dateLabel = value => new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(value));
 
-export function createClientManager(request) {
+export function createClientManager(request, openBilling) {
   const form = $("#client-form"), list = $("#client-list"), search = $("#client-search");
   const listStatus = $("#client-list-status"), saveStatus = $("#client-save-status"), notice = $("#clients-message");
   const payments = $("#client-payments"), more = $("#more-clients");
+  const invoiceAction = $("#client-invoice-action");
   let generation = 0, next, term = "", current, dirty = false, saving = false, opening = false;
 
   function moneySummary(quote, paid) {
@@ -26,6 +27,9 @@ export function createClientManager(request) {
     const invoiceTotal = current?.invoice?.total_paise;
     const paid = Array.from(payments.querySelectorAll('[data-payment="amount_paise"]'), safeRead).reduce((sum, amount) => sum + (amount ?? 0), 0);
     const total = invoiceTotal ?? quote;
+    invoiceAction.hidden = !current?.revision || (invoiceTotal != null && invoiceTotal <= paid);
+    invoiceAction.disabled = dirty || saving || opening;
+    invoiceAction.textContent = invoiceTotal == null ? "Issue invoice" : "Pay Balance";
     const values = [[invoiceTotal == null ? "Quote" : "Invoice total", total == null ? "—" : formatRupees(total)],
       ["Received", formatRupees(paid)], moneySummary(total, paid)];
     const summary = $("#payment-summary");
@@ -142,7 +146,7 @@ export function createClientManager(request) {
     } catch (error) {
       if (version === session) notice.textContent = error.message;
     } finally {
-      if (version === session) { opening = false; form.inert = false; }
+      if (version === session) { opening = false; form.inert = false; updateSummary(); }
     }
   }
 
@@ -157,12 +161,16 @@ export function createClientManager(request) {
     clearEditor();
     $("#add-client").focus();
   });
+  invoiceAction.addEventListener("click", () => {
+    if (current?.revision && !dirty && !saving && !opening) openBilling(current.id);
+  });
   $("#add-payment").addEventListener("click", () => {
     dirty = true;
     showPayment().querySelector("input").focus();
+    updateSummary();
   });
   form.addEventListener("input", () => { dirty = true; updateSummary(); });
-  form.addEventListener("change", () => { dirty = true; });
+  form.addEventListener("change", () => { dirty = true; updateSummary(); });
   search.addEventListener("submit", event => {
     event.preventDefault();
     term = $("#client-query").value.trim();
@@ -176,6 +184,7 @@ export function createClientManager(request) {
     if (!current || saving || opening) return;
     const version = session;
     saving = true; saveButton.disabled = true;
+    invoiceAction.disabled = true;
     try {
       const data = { ...readFields(form), revision: current.revision,
         payments: Array.from(payments.children, row => readFields(row, "[data-payment]")) };
@@ -199,6 +208,7 @@ export function createClientManager(request) {
     saving = false;
     saveButton.disabled = false;
     for (const fieldset of form.querySelectorAll("fieldset")) fieldset.disabled = false;
+    if (current) updateSummary();
   }
 
   function clearEditor() {
@@ -206,6 +216,7 @@ export function createClientManager(request) {
     setFields(form, { status: "enquiry", source: "other" });
     payments.replaceChildren(); $("#payment-summary").replaceChildren();
     $("#client-form-title").textContent = "New client";
+    invoiceAction.hidden = true;
     saveStatus.textContent = "";
     selectDirectoryRecord();
   }

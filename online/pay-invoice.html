@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#f8f7f2">
+  <title>Invoice payment · SM Photography</title>
+  <link rel="icon" href="./favicon.webp" type="image/webp">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f8f7f2; color: #153b2c; font: 1rem/1.55 system-ui, sans-serif; }
+    main { width: min(480px, calc(100% - 32px)); margin: clamp(25px, 10vh, 90px) auto; }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-weight: 700; }
+    header img { width: 36px; height: 36px; }
+    .payment-card { padding: 25px; border: 1px solid #d6dfd3; background: #fff; border-radius: 16px; }
+    h1 { font: 2.15rem/1.1 Georgia, serif; margin: 0 0 12px; }
+    #invoice-number { margin: 0; font-size: .85rem; }
+    #invoice-amount { font-size: 2.1rem; font-weight: 700; font-variant-numeric: tabular-nums; margin: 4px 0 15px; }
+    .payment-help, #payment-status { color: #506255; font-size: .9rem; }
+    .payment-help { margin: 12px 0; }
+    label { display: block; font-weight: 600; font-size: .875rem; }
+    .upi-details { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }
+    input { min-width: 0; flex: 1; min-height: 42px; padding: 6px 9px; background: #f5f8f3; color: #153b2c; border: 1px solid #bfcdbd; border-radius: 7px; font: inherit; }
+    :is(button, .pay-action) { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 7px 12px; border: 1px solid #bfcdbd; border-radius: 7px; background: #fff; color: #153b2c; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+    .pay-action { width: 100%; background: #20553d; border-color: #20553d; color: #fff; margin-bottom: 16px; }
+    :focus-visible { outline: 2px solid #20553d; outline-offset: 2px; }
+    [hidden] { display: none !important; }
+  </style>
+  <script type="module" src="./pay-invoice.js"></script>
+</head>
+<body>
+  <main>
+    <header><img src="./favicon.webp" alt="" width="36" height="36">SM Photography</header>
+    <section class="payment-card" aria-labelledby="payment-title">
+      <h1 id="payment-title">Invoice payment</h1>
+      <div id="invoice-details" hidden>
+        <p id="invoice-number"></p>
+        <p class="payment-help">Balance due</p>
+        <p id="invoice-amount"></p>
+      </div>
+      <div id="upi-payment" hidden>
+        <a class="pay-action" id="pay-balance" rel="noreferrer">Pay Balance by UPI</a>
+        <label for="upi-id">Studio UPI ID</label>
+        <div class="upi-details"><input id="upi-id" readonly><button id="copy-upi" type="button">Copy</button></div>
+        <p class="payment-help">Check the recipient and amount in your UPI app. If the app doesn’t open, copy the UPI ID and enter the balance shown. The studio updates this page after confirming receipt.</p>
+      </div>
+      <p id="payment-status" role="status">Loading invoice…</p>
+      <button id="refresh-invoice" type="button" hidden>Refresh balance</button>
+      <noscript><p>Enable JavaScript to view the invoice balance, or contact SM Photography.</p></noscript>
+    </section>
+  </main>
+</body>
+</html>

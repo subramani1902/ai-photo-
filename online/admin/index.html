@@ -100,6 +100,7 @@
             <div class="studio-form-actions">
               <button class="primary studio-action" type="submit">Save client</button>
               <button class="selection-button" id="close-client" type="button">Close</button>
+              <button class="selection-button" id="client-invoice-action" type="button" hidden></button>
             </div>
             <p id="client-save-status" class="account-message" role="status"></p>
           </form>
@@ -156,6 +157,23 @@
               <button id="billing-submit" type="submit" class="primary studio-action"></button>
               <button id="billing-cancel" type="button" class="selection-button">Cancel</button>
             </div>
+          </form>
+        </dialog>
+        <dialog class="billing-dialog" id="payment-link-dialog" aria-labelledby="payment-link-title">
+          <h3 id="payment-link-title">Share invoice payment link</h3>
+          <p class="studio-hint" id="payment-link-status" role="status"></p>
+          <div id="payment-link-details" class="studio-form" hidden>
+            <label>Customer payment link<input id="payment-share-url" readonly></label>
+            <p class="studio-hint">The page shows the current balance. Once you confirm receipt in your UPI app or bank account, use Record payment to update the ledger.</p>
+            <div class="studio-form-actions payment-share-actions">
+              <a class="selection-button" id="share-invoice-whatsapp" target="_blank" rel="noopener noreferrer">Share on WhatsApp</a>
+              <button class="selection-button" id="copy-invoice-link" type="button">Copy link</button>
+              <a class="selection-button" id="preview-invoice-link" target="_blank" rel="noopener noreferrer">Open payment page</a>
+            </div>
+          </div>
+          <form method="dialog" class="studio-form-actions payment-share-footer">
+            <button class="selection-button" id="revoke-invoice-link" type="button" hidden>Revoke link</button>
+            <button class="selection-button">Close</button>
           </form>
         </dialog>
       </section>

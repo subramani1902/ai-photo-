@@ -3,6 +3,7 @@
 from datetime import date, datetime, timezone
 from functools import cache
 import re
+from secrets import token_urlsafe
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,8 @@ from app.services.homepage_content import has_website_permission
 STUDIO_ADMINS = "website_studio_admins"
 STUDIO_PERMISSION = "manage_studio"
 RECORD_ID = r"[a-f0-9]{32}"
+PAYMENT_LINK_TOKEN = r"[A-Za-z0-9_-]{43}"
+UPI_ID = r"[A-Za-z0-9._-]{1,96}@[A-Za-z0-9.-]{1,64}"
 PAGE_SIZE = 30
 PACKAGE_KEYS = ("silver", "gold", "platinum")
 Amount = Annotated[int, Field(ge=0, le=10_000_000_000)]
@@ -119,6 +122,10 @@ class PaymentEntry(BillingChange):
     payment: Payment
 
 
+class InvoicePaymentLink(StudioModel):
+    token: str = Field(pattern=f"^{PAYMENT_LINK_TOKEN}$")
+
+
 @cache
 def initial_packages():
     return PublicPackages.model_validate_json((PROJECT_ROOT / "online/studio-packages.json").read_bytes())
@@ -147,6 +154,7 @@ class StudioStore:
     def __init__(self, client=None):
         self.client = client if client is not None else get_firestore_client()
         self.packages = self.client.document("website_content/studio_packages")
+        self.upi_settings = self.client.document("website_content/studio_upi")
         self.clients = self.client.collection("website_studio_clients")
 
     def authorize(self, principal):
@@ -237,6 +245,73 @@ class StudioStore:
                 raise StudioError("This booking already has 100 recorded payments.", 409)
             payments.append(update.payment.model_dump(mode="json"))
         return self.change_billing(record_id, update, uid, "payment", append)
+
+    @staticmethod
+    def invoice_balance(record):
+        return max(0, record["invoice"]["total_paise"] -
+                   sum(payment["amount_paise"] for payment in record["details"]["payments"]))
+
+    def save_upi_id(self, upi_id, uid):
+        if not re.fullmatch(UPI_ID, upi_id, flags=re.ASCII):
+            raise StudioError("Enter a valid studio UPI ID.")
+        self.upi_settings.set({"upi_id": upi_id, "updated_by": uid,
+                              "updated_at": datetime.now(timezone.utc)}, timeout=8)
+
+    def issue_payment_link(self, record_id, uid):
+        from google.cloud import firestore
+
+        reference = self.clients.document(record_id)
+        token = token_urlsafe(32)
+
+        @firestore.transactional
+        def issue(transaction):
+            record = reference.get(transaction=transaction).to_dict() or {}
+            if not record.get("invoice"):
+                raise StudioError("Issue an invoice for this booking first.", 409)
+            balance = self.invoice_balance(record)
+            if not balance:
+                raise StudioError("This invoice has no balance to pay.", 409)
+            link = record.get("invoice_payment_link")
+            if not link:
+                config = self.upi_settings.get(transaction=transaction).to_dict() or {}
+                upi_id = config.get("upi_id", "")
+                if not isinstance(upi_id, str) or not re.fullmatch(UPI_ID, upi_id, flags=re.ASCII):
+                    raise StudioError("The studio UPI account still needs to be configured.", 503)
+                link = {"token": token, "upi_id": upi_id, "created_by": uid,
+                        "created_at": datetime.now(timezone.utc)}
+                transaction.update(reference, {"invoice_payment_link": link})
+            return {"token": link["token"], "upi_id": link["upi_id"],
+                    "invoice_number": record["invoice"]["number"], "balance_paise": balance}
+
+        return issue(self.client.transaction())
+
+    def revoke_payment_link(self, record_id, token):
+        from google.cloud import firestore
+
+        reference = self.clients.document(record_id)
+
+        @firestore.transactional
+        def revoke(transaction):
+            record = reference.get(transaction=transaction).to_dict() or {}
+            link = record.get("invoice_payment_link")
+            if link and link.get("token") != token:
+                raise StudioError("The link changed. Open Pay Balance to see the current link.", 409)
+            if link:
+                transaction.update(reference, {"invoice_payment_link": None})
+
+        revoke(self.client.transaction())
+
+    def read_payment_link(self, token):
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        fields = ["invoice.number", "invoice.total_paise", "details.payments", "invoice_payment_link.upi_id"]
+        matches = self.clients.where(filter=FieldFilter("invoice_payment_link.token", "==", token)).select(fields).limit(1).get(timeout=8)
+        record = matches[0].to_dict() if matches else None
+        if not record or not record.get("invoice"):
+            raise StudioError("This payment link is unavailable. Ask the studio for a current link.", 404)
+        balance = self.invoice_balance(record)
+        return {"invoice_number": record["invoice"]["number"], "balance_paise": balance,
+                "upi_id": record["invoice_payment_link"]["upi_id"] if balance else None}
 
     def change_billing(self, record_id, update, uid, kind, action):
         from google.cloud import firestore

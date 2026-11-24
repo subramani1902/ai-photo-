@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.dependencies.firebase_auth import get_current_firebase_principal
 from app.services.homepage_content import has_website_permission
 from app.services.studio_management import (
-    ClientUpdate, InvoiceIssue, PACKAGE_KEYS, PackageUpdate, PaymentEntry, PublicPackages,
+    ClientUpdate, InvoiceIssue, InvoicePaymentLink, PACKAGE_KEYS, PackageUpdate, PaymentEntry, PublicPackages,
     RECORD_ID, STUDIO_ADMINS, STUDIO_PERMISSION,
     StudioError, StudioStore, search_term,
 )
@@ -182,3 +182,35 @@ def record_payment(record_id: RecordId, update: PaymentEntry, access=Depends(stu
         raise
     except Exception:
         raise HTTPException(503, "The payment could not be recorded. Try again.") from None
+
+
+@router.post("/admin/clients/{record_id}/payment-link")
+def issue_payment_link(record_id: RecordId, access=Depends(studio_only)):
+    store, uid = access
+    try:
+        return store.issue_payment_link(record_id, uid)
+    except StudioError:
+        raise
+    except Exception:
+        raise HTTPException(503, "The payment link could not be created. Try again.") from None
+
+
+@router.post("/admin/clients/{record_id}/payment-link/revoke")
+def revoke_payment_link(record_id: RecordId, data: InvoicePaymentLink, access=Depends(studio_only)):
+    try:
+        access[0].revoke_payment_link(record_id, data.token)
+    except StudioError:
+        raise
+    except Exception:
+        raise HTTPException(503, "The payment link could not be revoked. Try again.") from None
+    return {"revoked": True}
+
+
+@router.post("/invoice-payment")
+def view_payment_link(data: InvoicePaymentLink):
+    try:
+        return store_for_request().read_payment_link(data.token)
+    except StudioError:
+        raise
+    except Exception:
+        raise HTTPException(503, "The invoice balance is temporarily unavailable.") from None

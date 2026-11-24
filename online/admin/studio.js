@@ -38,20 +38,21 @@ async function request(path, options = {}) {
 
 const studioRequest = async (path, options) => (await request(studioPath + path, options)).json();
 const managers = {
-  clients: createClientManager(studioRequest),
+  clients: createClientManager(studioRequest, id => selectPanel("billing", id)),
   billing: createBillingManager(studioRequest),
   packages: createPackageManager(studioRequest),
   "homepage-manager": createHomepageManager((path, options) => request(homepagePath + path, options)),
 };
 
-function selectPanel(panel) {
+function selectPanel(panel, bookingId) {
   for (const button of nav) {
     const current = button.dataset.panel === panel;
     if (current) button.setAttribute("aria-current", "true");
     else button.removeAttribute("aria-current");
     $("#" + button.dataset.panel).hidden = !current;
   }
-  managers[panel].open();
+  if (panel === "billing" && bookingId) managers.billing.openBooking(bookingId);
+  else managers[panel].open();
 }
 
 function setBusy(busy) {

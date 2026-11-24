@@ -1,4 +1,5 @@
 import { formatRupees } from "../studio-packages.mjs";
+import { invoiceShareUrl, whatsappInvoiceUrl } from "../invoice-payment.mjs";
 import { readFields, setFields } from "./forms.js";
 
 const $ = selector => document.querySelector(selector);
@@ -118,8 +119,12 @@ export function createBillingManager(request) {
   const dialog = $("#billing-dialog"), form = $("#billing-form"), submit = $("#billing-submit");
   const invoiceFields = $("#billing-invoice-fields"), paymentFields = $("#billing-payment-fields");
   const select = $("#billing-client"), message = $("#billing-form-message"), cancel = $("#billing-cancel");
+  const share = $("#payment-link-dialog"), shareStatus = $("#payment-link-status"), shareDetails = $("#payment-link-details");
+  const shareUrl = $("#payment-share-url"), whatsapp = $("#share-invoice-whatsapp"), preview = $("#preview-invoice-link");
+  const revoke = $("#revoke-invoice-link");
   const views = [...document.querySelectorAll("[data-ledger-view]")];
   let bookings = [], view = "invoices", session = 0, loading = false, saving = false, ready = false, mode, bookingId, attempt;
+  let shareGeneration = 0, sharedInvoice;
 
   function render() {
     if (!ready) return;
@@ -150,7 +155,8 @@ export function createBillingManager(request) {
         const totals = bookingBalance(booking);
         const amount = stack(formatRupees(totals.paid), totals.total == null ? "Quote pending" : "of " + formatRupees(totals.total));
         const controls = element("div", "", "billing-actions");
-        if (booking.payments.length < 100) controls.append(action("Record payment", () => openDialog("payment", booking.id), true));
+        if (booking.invoice && totals.balance > 0) controls.append(action("Pay Balance", () => openShare(booking.id), true));
+        if (booking.payments.length < 100) controls.append(action("Record payment", () => openDialog("payment", booking.id)));
         if (view === "invoices") {
           controls.append(action("Print / PDF", () => printInvoice(booking)));
           const invoice = booking.invoice;
@@ -180,6 +186,7 @@ export function createBillingManager(request) {
       const data = await request("/admin/billing");
       if (version !== session) return;
       bookings = data.bookings; ready = true; render();
+      return true;
     } catch (error) {
       if (version === session) status.textContent = error.message;
     } finally {
@@ -213,6 +220,7 @@ export function createBillingManager(request) {
         option.value = booking.id;
         return option;
       }));
+      if (id) select.value = id;
       fillInvoice();
     } else {
       const booking = bookings.find(item => item.id === id);
@@ -224,6 +232,66 @@ export function createBillingManager(request) {
     }
     dialog.showModal();
   }
+
+  function clearShare() {
+    shareGeneration++;
+    sharedInvoice = undefined;
+    shareDetails.hidden = revoke.hidden = true;
+    shareUrl.value = "";
+    whatsapp.removeAttribute("href");
+    preview.removeAttribute("href");
+    revoke.disabled = false;
+    shareStatus.textContent = "";
+  }
+
+  async function openShare(id) {
+    if (share.open || loading || saving) return;
+    clearShare();
+    const version = shareGeneration;
+    shareStatus.textContent = "Preparing the invoice link…";
+    share.showModal();
+    try {
+      const link = await request("/admin/clients/" + id + "/payment-link", { method: "POST" });
+      if (version !== shareGeneration || !share.open) return;
+      sharedInvoice = { id, token: link.token };
+      shareUrl.value = invoiceShareUrl(link.token, window.location.href);
+      whatsapp.href = whatsappInvoiceUrl(link.invoice_number, shareUrl.value);
+      preview.href = shareUrl.value;
+      shareStatus.textContent = link.invoice_number + " · " + formatRupees(link.balance_paise) + " due · UPI " + link.upi_id;
+      shareDetails.hidden = revoke.hidden = false;
+    } catch (error) {
+      if (version === shareGeneration && share.open) shareStatus.textContent = error.message;
+    }
+  }
+
+  share.addEventListener("close", clearShare);
+  $("#copy-invoice-link").addEventListener("click", async () => {
+    const version = shareGeneration;
+    try {
+      await navigator.clipboard.writeText(shareUrl.value);
+      if (version === shareGeneration && share.open) shareStatus.textContent = "Payment link copied.";
+    } catch {
+      if (version !== shareGeneration || !share.open) return;
+      shareUrl.select();
+      shareStatus.textContent = "Select and copy the payment link.";
+    }
+  });
+  revoke.addEventListener("click", async () => {
+    if (!sharedInvoice || revoke.disabled || !window.confirm("Revoke this link? Anyone with it will lose access to the payment page.")) return;
+    const { id, token } = sharedInvoice, version = shareGeneration;
+    revoke.disabled = true;
+    try {
+      await request("/admin/clients/" + id + "/payment-link/revoke", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+      if (version !== shareGeneration || !share.open) return;
+      clearShare();
+      shareStatus.textContent = "Link revoked. Open Pay Balance to create a replacement.";
+    } catch (error) {
+      if (version !== shareGeneration || !share.open) return;
+      revoke.disabled = false;
+      shareStatus.textContent = error.message;
+    }
+  });
 
   select.addEventListener("change", fillInvoice);
   create.addEventListener("click", () => openDialog("invoice"));
@@ -290,10 +358,22 @@ export function createBillingManager(request) {
 
   return {
     open: load,
+    async openBooking(id) {
+      const version = session;
+      if (!await load() || version !== session || $("#billing").hidden) return;
+      views.find(button => button.dataset.ledgerView === "invoices").click();
+      const booking = bookings.find(item => item.id === id);
+      if (!booking) status.textContent = "The client booking could not be found.";
+      else if (!booking.invoice) openDialog("invoice", id);
+      else if (bookingBalance(booking).balance > 0) openShare(id);
+      else status.textContent = booking.invoice.number + " is paid.";
+    },
     isDirty: () => dialog.open,
     reset() {
       session++; ready = loading = saving = false; bookings = []; attempt = undefined;
       if (dialog.open) dialog.close();
+      if (share.open) share.close();
+      clearShare();
       form.reset(); select.replaceChildren(); paymentFields.replaceChildren();
       head.replaceChildren(); body.replaceChildren(); body.inert = false; table.hidden = true;
       refresh.disabled = submit.disabled = cancel.disabled = false; create.disabled = true;

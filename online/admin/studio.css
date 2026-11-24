@@ -91,6 +91,8 @@
 .billing-dialog .studio-form > fieldset { border: 0; padding: 0; }
 .billing-dialog #billing-invoice-fields > * + * { margin-top: 12px; }
 .billing-dialog .payment-row { margin: 0; }
+.payment-share-actions { flex-wrap: wrap; }
+.payment-share-footer { justify-content: flex-end; margin-top: 16px; }
 #billing-print { display: none; }
 
 @media (max-width: 950px) {
