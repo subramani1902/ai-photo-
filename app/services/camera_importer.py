@@ -8,7 +8,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from fastapi import UploadFile
-from app.api.photos import upload_event_photos
+from app.api.photos import EVENT_STORAGE, upload_event_photos
 from app.database.db import SessionLocal
 from app.database.models import Event, User
 from app.services.person_groups import EventSourceFolder, init_person_groups
@@ -48,14 +48,22 @@ async def run(folder, event_id):
         event = db.query(Event).filter_by(id=event_id).first()
         if event is None or not db.query(User).filter_by(id=event.owner_id, is_active=True).first():
             raise ValueError("Choose an event with an active owner.")
+        if (
+            not event.event_name
+            or Path(event.event_name).name != event.event_name
+            or event.event_name in {".", ".."}
+        ):
+            raise ValueError("Choose an event with a valid storage folder name.")
+        event_storage = EVENT_STORAGE / event.event_name
+        event_storage.mkdir(parents=True, exist_ok=True)
         db.merge(EventSourceFolder(event_id=event_id, folder_path=str(folder)))
         db.commit()
     observed, processed, blocked = {}, {}, {}
     LOG.info("Watching %s for event %s", folder, event_id)
     while True:
-        free_bytes = shutil.disk_usage(Path.cwd()).free
+        free_bytes = shutil.disk_usage(event_storage).free
         if free_bytes < MIN_FREE_DISK_BYTES:
-            LOG.error("Storage drive is nearly full (%d MB free); pausing imports for 30 seconds",
+            LOG.error("Event storage drive is nearly full (%d MB free); pausing imports for 30 seconds",
                       free_bytes // (1024 * 1024))
             await asyncio.sleep(30)
             continue

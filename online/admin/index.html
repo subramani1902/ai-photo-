@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#f8f7f2">
+  <title>Studio admin · SM Photography</title>
+  <link rel="icon" href="../favicon.webp" type="image/webp">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="../navigation.css">
+  <link rel="stylesheet" href="../account.css">
+  <link rel="stylesheet" href="../homepage-admin.css">
+  <link rel="stylesheet" href="./studio.css">
+  <script type="module" src="./studio.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../" aria-label="SM Photography home"><img class="brand-logo" src="../favicon.webp" alt=""><span>SM Photography<small>STUDIO ADMIN</small></span></a>
+    <nav class="site-nav" aria-label="Site navigation"><a href="../">Home</a><a href="../account.html">Client account</a><a href="../gallery.html">Private gallery</a><a href="./index.html" aria-current="page">Studio admin</a></nav>
+  </header>
+  <main class="homepage-admin studio-admin">
+    <section id="admin-login" class="intro account-intro" aria-labelledby="admin-login-title">
+      <h1 id="admin-login-title">Studio <em>admin</em></h1>
+      <p class="intro-copy">Sign in to manage the studio’s website and bookings.</p>
+      <div class="upload-card">
+        <form id="admin-sign-in-form" aria-label="Studio administrator sign in">
+          <div class="card-heading"><h2>Studio sign in</h2></div>
+          <label class="account-field">Email address<input id="admin-email" type="email" autocomplete="username" maxlength="254" required disabled></label>
+          <label class="account-field">Password<input id="admin-password" type="password" autocomplete="current-password" maxlength="4096" required disabled></label>
+          <button class="primary" type="submit" disabled>Sign in</button>
+        </form>
+        <div class="account-divider"><span>or</span></div>
+        <button id="admin-google-sign-in" class="google-sign-in" type="button" disabled><span aria-hidden="true" class="google-mark">G</span>Continue with Google</button>
+        <p id="admin-login-message" class="account-message" role="status">Preparing secure sign-in…</p>
+      </div>
+    </section>
+
+    <div id="studio-workspace" hidden>
+      <div class="studio-heading">
+        <h1>Studio <em>admin</em></h1>
+        <button id="admin-sign-out" class="selection-button" type="button">Sign out</button>
+      </div>
+      <nav class="studio-navigation" aria-label="Studio admin sections">
+        <button type="button" data-panel="clients" aria-controls="clients" hidden>Clients</button>
+        <button type="button" data-panel="packages" aria-controls="packages" hidden>Packages &amp; payments</button>
+        <button type="button" data-panel="homepage-manager" aria-controls="homepage-manager" hidden>Homepage photos</button>
+      </nav>
+
+      <section id="clients" class="studio-panel" aria-labelledby="clients-title" hidden>
+        <div class="studio-heading">
+          <h2 id="clients-title">Client bookings</h2>
+          <button class="primary studio-action" id="add-client" type="button">Add client</button>
+        </div>
+        <p class="studio-hint">Track enquiries, Instagram leads, event details, and booking payments.</p>
+        <p id="clients-message" class="account-message" role="status"></p>
+        <div class="studio-layout">
+          <section class="studio-card studio-directory" aria-label="Client directory">
+            <form id="client-search" class="studio-search" role="search">
+              <label>Find a client<input id="client-query" type="search" maxlength="100" placeholder="Name, phone, email or Instagram"></label>
+              <button class="selection-button" type="submit">Search</button>
+            </form>
+            <p id="client-list-status" class="studio-hint" role="status"></p>
+            <ul id="client-list"></ul>
+            <button class="selection-button" id="more-clients" type="button" hidden>Load more</button>
+          </section>
+          <form id="client-form" class="studio-card studio-form" hidden>
+            <h3 id="client-form-title">New client</h3>
+            <fieldset>
+              <legend>Contact</legend>
+              <div class="studio-fields">
+                <label>Client name<input name="name" maxlength="100" required></label>
+                <label>Phone / WhatsApp<input name="phone" type="tel" maxlength="30"></label>
+                <label>Email<input name="email" type="email" maxlength="254"></label>
+                <label>Instagram handle<input name="instagram" maxlength="31" placeholder="@username"></label>
+                <label>Lead source<select name="source"><option value="other">Other</option><option value="instagram">Instagram</option><option value="website">Website</option><option value="whatsapp">WhatsApp</option><option value="referral">Referral</option></select></label>
+                <label>Booking status<select name="status"><option value="enquiry">Enquiry</option><option value="quoted">Quoted</option><option value="booked">Booked</option><option value="completed">Completed</option><option value="archived">Archived</option></select></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Event &amp; follow-up</legend>
+              <div class="studio-fields">
+                <label>Event name<input name="event_name" maxlength="120"></label>
+                <label>Venue / city<input name="venue" maxlength="160"></label>
+                <label>Event date<input name="event_date" type="date"></label>
+                <label>Next follow-up<input name="follow_up_date" type="date"></label>
+                <label>Package<select name="package"><option value="">Undecided</option><option>Silver</option><option>Gold</option><option>Platinum</option><option>Wedding &amp; reception</option><option>Pre-wedding</option><option>Celebration</option><option>Custom</option></select></label>
+                <label>Agreed quote (₹)<input name="quote_paise" type="number" min="0" max="100000000" step="0.01" inputmode="decimal"></label>
+                <label class="studio-wide">Studio notes<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Recorded payments</legend>
+              <dl id="payment-summary" class="payment-summary" aria-live="polite"></dl>
+              <div id="client-payments"></div>
+              <button class="selection-button" id="add-payment" type="button">Add payment</button>
+            </fieldset>
+            <div class="studio-form-actions">
+              <button class="primary studio-action" type="submit">Save client</button>
+              <button class="selection-button" id="close-client" type="button">Close</button>
+            </div>
+            <p id="client-save-status" class="account-message" role="status"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="packages" class="studio-panel" aria-labelledby="packages-title" hidden>
+        <div class="studio-heading">
+          <h2 id="packages-title">Wedding packages</h2>
+          <a class="selection-button" href="../#wedding-packages" target="_blank" rel="noopener noreferrer">View public packages</a>
+        </div>
+        <p class="studio-hint">Saved prices, deposits, and terms appear on the public website.</p>
+        <button class="selection-button" id="reload-packages" type="button" hidden>Reload packages</button>
+        <form id="package-form" class="studio-form" hidden>
+          <div id="package-editors" class="package-editors"></div>
+          <button class="primary studio-action" type="submit">Save public packages</button>
+        </form>
+        <p id="package-message" class="account-message" role="status"></p>
+      </section>
+
+      <section id="homepage-manager" class="studio-panel" aria-labelledby="manager-title" hidden>
+        <div class="studio-heading">
+          <h2 id="manager-title">Homepage photos</h2>
+          <a href="../" target="_blank" rel="noopener noreferrer" class="selection-button">View homepage</a>
+        </div>
+        <p class="manager-availability">Keep the studio computer online while saving and publishing photos.</p>
+        <div class="manager-publish">
+          <div><strong id="publish-summary">Loading saved photos…</strong><p id="publish-progress" role="status"></p></div>
+          <div class="manager-actions"><button id="refresh-homepage" type="button" class="selection-button">Check status</button><button id="publish-homepage" class="primary" type="button" disabled>Publish photos</button></div>
+        </div>
+        <div class="manager-layout">
+          <section aria-label="Homepage photo positions"><h3 class="manager-section-title">Photo positions</h3><div class="homepage-slots" id="homepage-slots"></div></section>
+          <section class="photo-editor" aria-labelledby="photo-editor-title">
+            <h3 class="manager-section-title" id="photo-editor-title">Edit photo</h3>
+            <p id="slot-description" class="editor-help"></p>
+            <div class="editor-preview"><img id="homepage-image-preview" alt="" hidden><span id="editor-placeholder">Choose a photo position</span></div>
+            <form id="homepage-photo-form" aria-label="Edit homepage photograph">
+              <label class="account-field">Replacement photo<input id="homepage-photo-file" type="file" accept="image/jpeg,image/png,image/webp"></label>
+              <p class="editor-help">JPG, PNG or WebP, up to 20 MB.</p>
+              <label class="account-field">Caption<input id="homepage-photo-title" maxlength="100" required></label>
+              <label class="account-field">Image description<input id="homepage-photo-alt" maxlength="250" required></label>
+              <label class="account-field">Instagram post link<input id="homepage-photo-instagram" type="url" maxlength="500" placeholder="https://www.instagram.com/p/…"></label>
+              <label class="account-field">Photo framing<select id="homepage-photo-position"><option value="50% 50%">Centre</option><option value="50% 15%">Towards the top</option><option value="50% 85%">Towards the bottom</option></select></label>
+              <button id="save-homepage-photo" class="primary" type="submit" disabled>Save photo draft</button>
+            </form>
+          </section>
+        </div>
+        <p id="homepage-admin-message" class="account-message" role="status"></p>
+      </section>
+    </div>
+  </main>
+
+  <template id="payment-template">
+    <div class="payment-row studio-fields">
+      <label>Payment date<input data-payment="date" type="date" required></label>
+      <label>Amount (₹)<input data-payment="amount_paise" type="number" min="0.01" max="100000000" step="0.01" inputmode="decimal" required></label>
+      <label>Method<select data-payment="method"><option value="upi">UPI</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="cash">Cash</option><option value="other">Other</option></select></label>
+      <label>Transaction reference<input data-payment="reference" maxlength="100"></label>
+      <label class="studio-wide">Payment note<input data-payment="notes" maxlength="300"></label>
+      <button class="selection-button remove-payment" type="button">Remove payment</button>
+    </div>
+  </template>
+
+  <template id="package-template">
+    <fieldset class="studio-card package-editor">
+      <legend></legend>
+      <label>Description<textarea name="description" rows="2" maxlength="350"></textarea></label>
+      <label>Included services, one per line<textarea name="inclusions" rows="8" maxlength="600"></textarea></label>
+      <div class="studio-fields">
+        <label>Package price (₹)<input name="starting_paise" type="number" min="0" max="100000000" step="0.01" inputmode="decimal"></label>
+        <label>Booking deposit (₹)<input name="deposit_paise" type="number" min="0" max="100000000" step="0.01" inputmode="decimal"></label>
+      </div>
+      <label>Public payment terms<textarea name="payment_terms" rows="3" maxlength="500"></textarea></label>
+    </fieldset>
+  </template>
+</body>
+</html>

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.client_events import router as client_events_router
 from app.api.firebase_auth import router as firebase_auth_router
 from app.api.homepage import router as homepage_router
+from app.api.studio import router as studio_router
 from app.core.firebase_config import PROJECT_ROOT
 from dotenv import load_dotenv
 
@@ -40,7 +41,7 @@ app.add_middleware(CORSMiddleware, allow_origins=allowed_origins(), allow_creden
 @app.middleware("http")
 async def private_responses(request, call_next):
     response = await call_next(request)
-    response.headers["Cache-Control"] = "private, no-store"
+    response.headers.setdefault("Cache-Control", "private, no-store")
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
@@ -54,3 +55,4 @@ def health():
 app.include_router(firebase_auth_router)
 app.include_router(client_events_router)
 app.include_router(homepage_router)
+app.include_router(studio_router)

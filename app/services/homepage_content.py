@@ -35,6 +35,18 @@ def admin_document_id(uid):
     return sha256(uid.encode()).hexdigest()
 
 
+def has_website_permission(client, principal, collection, permission):
+    claims = principal.claims
+    email = claims.get("email")
+    if (claims.get("email_verified") is not True or not isinstance(email, str)
+            or not email.strip() or principal.uid.startswith("gallery-client:")
+            or claims.get("actor_type") == "gallery_client"):
+        return False
+    role = client.document(f"{collection}/{admin_document_id(principal.uid)}").get(timeout=10).to_dict()
+    return bool(role and role.get("firebase_uid") == principal.uid and role.get("enabled") is True
+                and role.get("permission") == permission and role.get("email") == email.strip().lower())
+
+
 def clean_photo(current, *, title, alt, instagram_url="", position="50% 50%"):
     def text(value, maximum):
         if not isinstance(value, str) or not value.strip() or len(value) > maximum or any(ord(c) < 32 for c in value):
@@ -144,15 +156,7 @@ class HomepageStore:
         self.reference = self.client.document("website_content/homepage")
 
     def authorize(self, principal):
-        claims = principal.claims
-        if (claims.get("email_verified") is not True or principal.uid.startswith("gallery-client:")
-                or claims.get("actor_type") == "gallery_client"):
-            raise HomepageError("This account cannot manage the studio homepage.", 403)
-        role = self.client.document("website_homepage_admins/" + admin_document_id(principal.uid)).get(timeout=10).to_dict()
-        if (not role or role.get("firebase_uid") != principal.uid or role.get("enabled") is not True
-                or role.get("permission") != "manage_homepage"
-                or not isinstance(claims.get("email"), str)
-                or role.get("email") != claims["email"].strip().lower()):
+        if not has_website_permission(self.client, principal, "website_homepage_admins", "manage_homepage"):
             raise HomepageError("This account cannot manage the studio homepage.", 403)
 
     def mutate(self, action):

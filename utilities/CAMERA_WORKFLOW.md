@@ -14,6 +14,8 @@ same folder. The importer waits for a file to stop changing for five seconds,
 then uses the normal ingestion pipeline: duplicate check, face detection,
 saved face vectors, person assignments, and an event search-index rebuild.
 Keep the online relay worker running to answer website searches.
+The importer checks free space on the event's storage volume, so event folders
+linked to another drive continue importing when the project drive is full.
 
 New tables are created at backend startup without altering existing tables.
 Each person group is local to one event and has an anonymous numeric label.

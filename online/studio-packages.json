@@ -1,0 +1,23 @@
+{
+  "silver": {
+    "description": "",
+    "inclusions": "1 traditional video\nTraditional photography with unlimited edited photos\n4K full video\n2 albums\nLifetime Google Drive photo link\n1 photo frame\nComplimentary pre-wedding shoot\n300 plants",
+    "starting_paise": 4500000,
+    "deposit_paise": null,
+    "payment_terms": ""
+  },
+  "gold": {
+    "description": "",
+    "inclusions": "1 traditional video\nTraditional photography with unlimited edited photos\nCandid photography\nCandid video\n4K full video\n2 albums\nLifetime Google Drive photo link\n1 photo frame\nComplimentary pre-wedding shoot\n300 plants",
+    "starting_paise": 7500000,
+    "deposit_paise": null,
+    "payment_terms": ""
+  },
+  "platinum": {
+    "description": "",
+    "inclusions": "1 traditional video\nTraditional photography with unlimited edited photos\nCandid photography\nCandid video\nDrone video\n4K full video\n2 premium albums\nLifetime Google Drive photo link\n1 photo frame\nComplimentary pre-wedding shoot\n300 plants",
+    "starting_paise": 10000000,
+    "deposit_paise": null,
+    "payment_terms": ""
+  }
+}
