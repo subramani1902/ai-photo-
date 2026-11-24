@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from functools import cache
 import re
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -103,6 +104,21 @@ class ClientUpdate(ClientDetails):
     revision: int = Field(ge=0, strict=True)
 
 
+class BillingChange(StudioModel):
+    revision: int = Field(gt=0, strict=True)
+    operation_id: str = Field(pattern=f"^{RECORD_ID}$")
+
+
+class InvoiceIssue(BillingChange):
+    description: str = Field(min_length=1, max_length=120)
+    total_paise: Annotated[Amount, Field(gt=0, strict=True)]
+    due_date: date | None = None
+
+
+class PaymentEntry(BillingChange):
+    payment: Payment
+
+
 @cache
 def initial_packages():
     return PublicPackages.model_validate_json((PROJECT_ROOT / "online/studio-packages.json").read_bytes())
@@ -167,20 +183,83 @@ class StudioStore:
             details = data["details"]
             clients.append({"id": doc.id, **{key: details[key] for key in (
                 "name", "status", "source", "event_date", "follow_up_date", "quote_paise", "package",
-            )}, "paid_paise": sum(payment["amount_paise"] for payment in details["payments"])})
+            )}, "paid_paise": sum(payment["amount_paise"] for payment in details["payments"]),
+                "invoice_total_paise": (data.get("invoice") or {}).get("total_paise")})
         return {"clients": clients, "next": docs[PAGE_SIZE - 1].id if len(docs) > PAGE_SIZE else None}
 
     def read_client(self, record_id):
         data = self.clients.document(record_id).get(timeout=8).to_dict()
         if data is None:
             raise StudioError("Client record was not found.", 404)
-        return {"id": record_id, "revision": data["revision"], **data["details"]}
+        return {"id": record_id, "revision": data["revision"], **data["details"], "invoice": data.get("invoice")}
 
     def save_client(self, record_id, update, uid):
         details = update.model_dump(mode="json", exclude={"revision"})
         revision = self.save(self.clients.document(record_id), details, update.revision, uid,
                              search=search_prefixes(details))
         return {"id": record_id, "revision": revision, **details}
+
+    @staticmethod
+    def billing_record(record_id, data):
+        details = data["details"]
+        return {"id": record_id, "revision": data["revision"], "invoice": data.get("invoice"),
+                **{key: details.get(key) for key in ("name", "event_name", "event_date", "package", "quote_paise")},
+                "payments": details.get("payments", [])}
+
+    def read_billing(self):
+        fields = ["revision", "invoice", "details.name", "details.event_name", "details.event_date",
+                  "details.package", "details.quote_paise", "details.payments"]
+        records = [self.billing_record(doc.id, doc.to_dict())
+                   for doc in self.clients.select(fields).stream(timeout=15)]
+        return sorted(records, key=lambda record: (record["name"].casefold(), record["id"]))
+
+    def issue_invoice(self, record_id, update, uid):
+        def issue(transaction, record):
+            if record.get("invoice"):
+                raise StudioError("This booking already has an invoice.", 409)
+            today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+            counter = self.client.document(f"website_invoice_counters/{today.year}")
+            current = counter.get(transaction=transaction).to_dict() or {}
+            number = current.get("number", 0) + 1
+            record["invoice"] = {
+                "number": f"INV-{today.year}-{number:04d}", "issued_on": today.isoformat(),
+                "due_date": update.due_date.isoformat() if update.due_date else None,
+                "description": update.description, "total_paise": update.total_paise,
+                "client_name": record["details"]["name"],
+            }
+            transaction.set(counter, {"number": number})
+        return self.change_billing(record_id, update, uid, "invoice", issue)
+
+    def record_payment(self, record_id, update, uid):
+        def append(transaction, record):
+            payments = record["details"]["payments"]
+            if len(payments) >= 100:
+                raise StudioError("This booking already has 100 recorded payments.", 409)
+            payments.append(update.payment.model_dump(mode="json"))
+        return self.change_billing(record_id, update, uid, "payment", append)
+
+    def change_billing(self, record_id, update, uid, kind, action):
+        from google.cloud import firestore
+
+        reference = self.clients.document(record_id)
+        operation = {"id": update.operation_id, "kind": kind}
+
+        @firestore.transactional
+        def write(transaction):
+            record = reference.get(transaction=transaction).to_dict()
+            if record is None:
+                raise StudioError("Client record was not found.", 404)
+            if record.get("billing_operation") == operation:
+                return self.billing_record(record_id, record)
+            if record["revision"] != update.revision:
+                raise StudioError("This booking changed. Reload it before saving again.", 409)
+            action(transaction, record)
+            record.update(revision=record["revision"] + 1, billing_operation=operation,
+                          updated_at=datetime.now(timezone.utc), updated_by=uid)
+            transaction.set(reference, record)
+            return self.billing_record(record_id, record)
+
+        return write(self.client.transaction())
 
     def save(self, reference, details, revision, uid, *, search=None):
         from google.cloud import firestore
@@ -194,7 +273,7 @@ class StudioStore:
             if current_revision != revision:
                 raise StudioError("This record changed. Reload it before saving again.", 409)
             now = datetime.now(timezone.utc)
-            updated = {"details": details, "revision": revision + 1, "updated_at": now, "updated_by": uid,
+            updated = {**previous, "details": details, "revision": revision + 1, "updated_at": now, "updated_by": uid,
                        "created_at": previous.get("created_at", now)}
             if search is not None:
                 updated["search_prefixes"] = search

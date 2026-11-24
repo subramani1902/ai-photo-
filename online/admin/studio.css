@@ -55,6 +55,44 @@
 .package-editor { display: grid; align-content: start; gap: 13px; }
 .package-editor legend { padding: 0 6px; font-size: 21px; }
 
+.billing-heading { align-items: flex-start; }
+.billing-heading .studio-action { flex: none; margin-top: 4px; }
+.billing-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 8px 0 20px; }
+.billing-metrics > div { background: #fff; border: 1px solid var(--studio-line); border-radius: 12px; padding: 17px 19px; }
+.billing-metrics dt { color: var(--studio-muted); font-size: 13px; font-weight: 600; }
+.billing-metrics dd { color: var(--studio-green); font-size: clamp(20px, 3vw, 30px); font-weight: 700; font-variant-numeric: tabular-nums; margin: 6px 0 3px; overflow-wrap: anywhere; }
+.billing-metrics div:nth-child(2) dd { color: #805009; }
+.billing-metrics small { color: var(--studio-muted); font-size: 12px; }
+.billing-ledger { padding: 0; overflow: hidden; }
+.billing-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 17px; }
+.billing-views { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px; background: #eef2eb; border-radius: 9px; }
+.billing-views button { color: var(--studio-green); background: transparent; border: 0; border-radius: 6px; padding: 9px 11px; font: inherit; font-size: 13px; font-weight: 600; min-height: 38px; }
+.billing-views button[aria-pressed="true"] { background: #fff; color: #173826; box-shadow: 0 1px 4px #24432829; }
+.billing-table-scroll { overflow-x: auto; }
+.billing-table { width: 100%; min-width: 675px; border-collapse: collapse; text-align: left; font-size: 13px; }
+.billing-table th { background: #f1f4ef; font-size: 12px; color: #40543e; }
+.billing-table :is(th, td) { padding: 13px 17px; border-top: 1px solid #e9eee6; vertical-align: middle; }
+.billing-stack { display: grid; gap: 3px; }
+.billing-stack strong { color: var(--ink); overflow-wrap: anywhere; }
+.billing-stack small { color: var(--studio-muted); font-size: 12px; overflow-wrap: anywhere; }
+.billing-pill { justify-self: start; white-space: nowrap; border-radius: 999px; background: #edf0eb; color: #425140; font-size: 12px; font-weight: 600; padding: 4px 9px; }
+.billing-pill[data-tone="paid"] { color: #166348; background: #e1f2e8; }
+.billing-pill[data-tone="partial"] { color: #77520b; background: #fff0cb; }
+.billing-pill[data-tone="unpaid"] { color: #862b36; background: #fce8ea; }
+.billing-pill[data-tone="credit"] { color: #334676; background: #e8edfb; }
+.billing-stack .billing-overdue { color: #862b36; font-weight: 600; }
+.billing-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.billing-actions :is(button, .selection-button) { min-height: 37px; font-size: 12px; }
+.billing-record { background: #e5efe5; color: #17442f; border: 1px solid #d0dfd0; border-radius: 8px; padding: 7px 10px; font-weight: 600; white-space: nowrap; }
+.studio-admin .billing-status { margin: 0; padding: 15px 17px; }
+.billing-status:empty { display: none; }
+.billing-dialog { width: min(520px, calc(100% - 32px)); max-height: calc(100dvh - 35px); padding: 22px; border: 1px solid #afbcab; border-radius: 14px; background: #fff; color: var(--ink); }
+.billing-dialog::backdrop { background: #19302473; }
+.billing-dialog .studio-form > fieldset { border: 0; padding: 0; }
+.billing-dialog #billing-invoice-fields > * + * { margin-top: 12px; }
+.billing-dialog .payment-row { margin: 0; }
+#billing-print { display: none; }
+
 @media (max-width: 950px) {
   .package-editor .studio-fields { grid-template-columns: 1fr; }
 }
@@ -66,4 +104,26 @@
 @media (max-width: 390px) {
   .studio-fields, .package-editor .studio-fields { grid-template-columns: minmax(0, 1fr); }
   .studio-heading { flex-wrap: wrap; }
+}
+
+@media (max-width: 580px) {
+  .billing-metrics { grid-template-columns: 1fr; gap: 8px; }
+  .billing-metrics > div { padding: 12px 15px; }
+  .billing-metrics dd { margin: 3px 0 1px; }
+  .billing-heading { flex-wrap: wrap; }
+}
+
+@media print {
+  @page { margin: 18mm; }
+  body.printing-studio-invoice { background: #fff; color: #1d2620; }
+  body.printing-studio-invoice > :not(#billing-print) { display: none !important; }
+  body.printing-studio-invoice #billing-print { display: block; font: 12pt/1.55 system-ui, sans-serif; }
+  #billing-print header { border-bottom: 2px solid #284838; padding-bottom: 16px; }
+  #billing-print h1 { margin: 5px 0 0; font-size: 27pt; }
+  #billing-print h2 { font-size: 16pt; margin-top: 25px; }
+  #billing-print dl { margin: 20px 0; }
+  #billing-print dl div { display: grid; grid-template-columns: 1fr 2fr; gap: 14px; border-bottom: 1px solid #d9e1d8; padding: 7px 0; break-inside: avoid; }
+  #billing-print dt { font-weight: 600; }
+  #billing-print dd { margin: 0; overflow-wrap: anywhere; }
+  #billing-print li { margin: 5px 0; break-inside: avoid; }
 }

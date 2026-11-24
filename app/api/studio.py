@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.dependencies.firebase_auth import get_current_firebase_principal
 from app.services.homepage_content import has_website_permission
 from app.services.studio_management import (
-    ClientUpdate, PACKAGE_KEYS, PackageUpdate, PublicPackages, RECORD_ID, STUDIO_ADMINS, STUDIO_PERMISSION,
+    ClientUpdate, InvoiceIssue, PACKAGE_KEYS, PackageUpdate, PaymentEntry, PublicPackages,
+    RECORD_ID, STUDIO_ADMINS, STUDIO_PERMISSION,
     StudioError, StudioStore, search_term,
 )
 
@@ -151,3 +152,33 @@ def update_client(record_id: RecordId, update: ClientUpdate, access=Depends(stud
         raise
     except Exception:
         raise HTTPException(503, "The client record could not be saved. Try again.") from None
+
+
+@router.get("/admin/billing")
+def read_billing(access=Depends(studio_only)):
+    try:
+        return {"bookings": access[0].read_billing()}
+    except Exception:
+        raise HTTPException(503, "The billing ledger is temporarily unavailable.") from None
+
+
+@router.post("/admin/clients/{record_id}/invoice")
+def issue_invoice(record_id: RecordId, update: InvoiceIssue, access=Depends(studio_only)):
+    store, uid = access
+    try:
+        return store.issue_invoice(record_id, update, uid)
+    except StudioError:
+        raise
+    except Exception:
+        raise HTTPException(503, "The invoice could not be issued. Try again.") from None
+
+
+@router.post("/admin/clients/{record_id}/payments")
+def record_payment(record_id: RecordId, update: PaymentEntry, access=Depends(studio_only)):
+    store, uid = access
+    try:
+        return store.record_payment(record_id, update, uid)
+    except StudioError:
+        raise
+    except Exception:
+        raise HTTPException(503, "The payment could not be recorded. Try again.") from None

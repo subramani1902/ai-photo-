@@ -41,7 +41,12 @@ Use `--studio --revoke --apply` with the same email to revoke it.
   dates, agreed quotes and payments received. Add enquiries from Instagram or
   WhatsApp as client records. Booking payments are entered by staff and balances
   are calculated from the recorded amounts.
-- **Packages & payments** edits the public package price, inclusions, booking
+- **Payments & invoices** shows total recorded payments, outstanding invoice
+  balances, and a transaction history. Issue one numbered invoice per booking
+  and use **Print / PDF** to save or print a copy. Record payments received by
+  UPI, bank transfer, card, cash, or another method. Payments entered on a
+  client record also appear in the ledger.
+- **Wedding packages** edits the public package price, inclusions, booking
   deposit, and terms. Use the studio gateway to serve saved rates. When the site
   cannot reach it, the homepage identifies the brochure prices as a reference.
 - **Homepage photos** edits the existing portfolio positions, captions,

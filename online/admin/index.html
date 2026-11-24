@@ -44,7 +44,8 @@
       </div>
       <nav class="studio-navigation" aria-label="Studio admin sections">
         <button type="button" data-panel="clients" aria-controls="clients" hidden>Clients</button>
-        <button type="button" data-panel="packages" aria-controls="packages" hidden>Packages &amp; payments</button>
+        <button type="button" data-panel="billing" aria-controls="billing" hidden>Payments &amp; invoices</button>
+        <button type="button" data-panel="packages" aria-controls="packages" hidden>Wedding packages</button>
         <button type="button" data-panel="homepage-manager" aria-controls="homepage-manager" hidden>Homepage photos</button>
       </nav>
 
@@ -103,6 +104,60 @@
             <p id="client-save-status" class="account-message" role="status"></p>
           </form>
         </div>
+      </section>
+
+      <section id="billing" class="studio-panel billing-panel" aria-labelledby="billing-title" hidden>
+        <div class="studio-heading billing-heading">
+          <div>
+            <h2 id="billing-title">Payments &amp; invoices</h2>
+            <p class="studio-hint">Track booking balances, record payments and print invoices.</p>
+          </div>
+          <button id="new-invoice" class="primary studio-action" type="button" disabled>New invoice</button>
+        </div>
+
+        <dl class="billing-metrics" aria-label="Billing totals">
+          <div><dt>Total collected</dt><dd id="billing-collected">—</dd><small>All recorded payments</small></div>
+          <div><dt>Outstanding invoices</dt><dd id="billing-outstanding">—</dd><small>Remaining across issued invoices</small></div>
+          <div><dt>Invoices issued</dt><dd id="billing-count">—</dd><small>Numbered booking invoices</small></div>
+        </dl>
+
+        <div class="billing-ledger studio-card">
+          <div class="billing-toolbar">
+            <div class="billing-views" role="group" aria-label="Ledger view">
+              <button type="button" data-ledger-view="invoices" aria-pressed="true">Invoices</button>
+              <button type="button" data-ledger-view="bookings" aria-pressed="false">Booking balances</button>
+              <button type="button" data-ledger-view="transactions" aria-pressed="false">Transactions</button>
+            </div>
+            <button class="selection-button" id="reload-billing" type="button">Refresh</button>
+          </div>
+          <div class="billing-table-scroll" tabindex="0" role="region" aria-label="Billing records">
+            <table class="billing-table" aria-label="Invoices" hidden>
+              <thead id="billing-table-head"></thead>
+              <tbody id="billing-table-body"></tbody>
+            </table>
+          </div>
+          <p class="studio-hint billing-status" id="billing-status" role="status"></p>
+        </div>
+
+        <dialog class="billing-dialog" id="billing-dialog" aria-labelledby="billing-dialog-title">
+          <form id="billing-form" class="studio-form">
+            <h3 id="billing-dialog-title"></h3>
+            <fieldset id="billing-invoice-fields">
+              <label>Client booking<select id="billing-client" name="booking" required></select></label>
+              <label>Invoice description<input name="description" maxlength="120" required></label>
+              <div class="studio-fields">
+                <label>Invoice total (₹)<input name="total_paise" type="number" min="0.01" max="100000000" step="0.01" inputmode="decimal" required></label>
+                <label>Due date<input type="date" name="due_date"></label>
+              </div>
+            </fieldset>
+            <fieldset id="billing-payment-fields" hidden disabled></fieldset>
+            <p id="billing-form-message" class="account-message" role="status"></p>
+            <div class="studio-form-actions">
+              <button id="billing-submit" type="submit" class="primary studio-action"></button>
+              <button id="billing-cancel" type="button" class="selection-button">Cancel</button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       <section id="packages" class="studio-panel" aria-labelledby="packages-title" hidden>
@@ -174,5 +229,6 @@
       <label>Public payment terms<textarea name="payment_terms" rows="3" maxlength="500"></textarea></label>
     </fieldset>
   </template>
+  <section id="billing-print" aria-label="Printable studio invoice" hidden></section>
 </body>
 </html>

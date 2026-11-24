@@ -9,7 +9,7 @@ export function createClientManager(request) {
   const form = $("#client-form"), list = $("#client-list"), search = $("#client-search");
   const listStatus = $("#client-list-status"), saveStatus = $("#client-save-status"), notice = $("#clients-message");
   const payments = $("#client-payments"), more = $("#more-clients");
-  let generation = 0, loaded = false, next, term = "", current, dirty = false, saving = false, opening = false;
+  let generation = 0, next, term = "", current, dirty = false, saving = false, opening = false;
 
   function moneySummary(quote, paid) {
     if (quote == null) return ["Quote pending", "—"];
@@ -23,8 +23,11 @@ export function createClientManager(request) {
       catch { return null; }
     };
     const quote = safeRead(form.elements.quote_paise);
+    const invoiceTotal = current?.invoice?.total_paise;
     const paid = Array.from(payments.querySelectorAll('[data-payment="amount_paise"]'), safeRead).reduce((sum, amount) => sum + (amount ?? 0), 0);
-    const values = [["Quote", quote == null ? "—" : formatRupees(quote)], ["Received", formatRupees(paid)], moneySummary(quote, paid)];
+    const total = invoiceTotal ?? quote;
+    const values = [[invoiceTotal == null ? "Quote" : "Invoice total", total == null ? "—" : formatRupees(total)],
+      ["Received", formatRupees(paid)], moneySummary(total, paid)];
     const summary = $("#payment-summary");
     summary.replaceChildren();
     for (const [key, value] of values) {
@@ -59,7 +62,7 @@ export function createClientManager(request) {
   function addDirectoryRecord(client) {
     const item = document.createElement("li"), button = document.createElement("button");
     const name = document.createElement("strong"), stage = document.createElement("span"), details = document.createElement("small");
-    const [balance, amount] = moneySummary(client.quote_paise, client.paid_paise);
+    const [balance, amount] = moneySummary(client.invoice_total_paise ?? client.quote_paise, client.paid_paise);
     button.type = "button";
     button.dataset.id = client.id;
     name.textContent = client.name;
@@ -94,7 +97,6 @@ export function createClientManager(request) {
       }
       next = data.next;
       more.hidden = !next;
-      loaded = true;
       selectDirectoryRecord();
       const count = list.children.length;
       listStatus.textContent = count ? `${count} client${count === 1 ? "" : "s"}${next ? " shown" : ""}.`
@@ -107,7 +109,7 @@ export function createClientManager(request) {
   }
 
   function showRecord(record) {
-    current = { id: record.id, revision: record.revision };
+    current = { id: record.id, revision: record.revision, invoice: record.invoice };
     setFields(form, { source: "other", status: "enquiry", ...record });
     payments.replaceChildren();
     $("#add-payment").disabled = false;
@@ -124,8 +126,8 @@ export function createClientManager(request) {
   const canLeave = () => !saving && !opening && (!dirty || window.confirm("Discard the unsaved changes to this client?"));
   let session = 0;
 
-  async function openClient(id) {
-    if (current?.id === id || !canLeave()) return;
+  async function openClient(id, refresh = false) {
+    if ((!refresh && current?.id === id) || !canLeave()) return;
     const version = session;
     opening = true;
     form.inert = true;
@@ -209,10 +211,13 @@ export function createClientManager(request) {
   }
 
   return {
-    open() { if (!loaded) loadList(); },
+    open() {
+      loadList();
+      if (current?.revision && !dirty) openClient(current.id, true);
+    },
     isDirty: () => dirty,
     reset() {
-      session++; generation++; loaded = false; next = null; term = ""; opening = false;
+      session++; generation++; next = null; term = ""; opening = false;
       form.inert = false;
       finishSave(); clearEditor(); search.reset(); list.replaceChildren();
       more.hidden = true; notice.textContent = ""; listStatus.textContent = "";

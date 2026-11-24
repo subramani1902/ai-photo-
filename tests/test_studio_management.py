@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -10,7 +11,7 @@ from app.dependencies.firebase_auth import get_current_firebase_principal
 from app.photo_gateway import app
 from app.services.homepage_content import admin_document_id
 from app.services.studio_management import (
-    ClientUpdate, PackageUpdate, StudioError, StudioStore, initial_packages, search_term,
+    ClientUpdate, InvoiceIssue, PackageUpdate, PaymentEntry, StudioError, StudioStore, initial_packages, search_term,
 )
 
 
@@ -127,3 +128,58 @@ class StudioManagementTests(unittest.TestCase):
             self.assertEqual(conflict.exception.status, 409)
             self.assertEqual(self.store.save(reference, {"name": "Current change"}, 1, self.actor.uid), 2)
             self.assertEqual(transaction.set.call_args.args[1]["created_at"], first["created_at"])
+
+    def test_billing_routes_require_studio_permission_and_use_private_responses(self):
+        record_id = "1" * 32
+        invoice = {"operation_id": "2" * 32, "revision": 1, "description": "Test booking", "total_paise": 7_500_000}
+        payment = {"operation_id": "3" * 32, "revision": 2,
+                   "payment": {"date": "2026-11-24", "amount_paise": 2_000_000, "method": "upi"}}
+        invoice_url = f"/api/studio/admin/clients/{record_id}/invoice"
+        payment_url = f"/api/studio/admin/clients/{record_id}/payments"
+        self.assertEqual(self.client.get("/api/studio/admin/billing").status_code, 401)
+        self.sign_in(photos=True)
+        self.assertEqual(self.client.post(invoice_url, json=invoice).status_code, 403)
+        self.assertEqual(self.client.post(payment_url, json=payment).status_code, 403)
+        self.sign_in(studio_access=True)
+        with patch.object(self.store, "read_billing", return_value=[]) as read, \
+                patch.object(self.store, "issue_invoice", return_value={"id": record_id}) as issue, \
+                patch.object(self.store, "record_payment", return_value={"id": record_id}) as save:
+            ledger = self.client.get("/api/studio/admin/billing")
+            self.assertEqual(ledger.json(), {"bookings": []})
+            self.assertEqual(ledger.headers["cache-control"], "private, no-store")
+            read.assert_called_once_with()
+            self.assertEqual(self.client.post(invoice_url, json=invoice).status_code, 200)
+            self.assertEqual(self.client.post(payment_url, json=payment).status_code, 200)
+            issue.assert_called_once_with(record_id, InvoiceIssue.model_validate(invoice), self.actor.uid)
+            save.assert_called_once_with(record_id, PaymentEntry.model_validate(payment), self.actor.uid)
+            self.assertEqual(self.client.post(invoice_url, json={**invoice, "total_paise": 0}).status_code, 422)
+
+    def test_invoice_and_payment_retries_preserve_one_ledger_and_client_edits_keep_invoice(self):
+        record_id = "1" * 32
+        records = {record_id: {"revision": 1, "details": ClientUpdate(name="Test booking", revision=0).model_dump(
+            mode="json", exclude={"revision"})}}
+
+        def document(path):
+            return SimpleNamespace(path=path, get=lambda **_: SimpleNamespace(to_dict=lambda: deepcopy(records.get(path))))
+
+        self.store.clients.document.side_effect = document
+        self.firestore.document = document
+        transaction = self.firestore.transaction.return_value
+        transaction.set.side_effect = lambda reference, value: records.update({reference.path: deepcopy(value)})
+        invoice = InvoiceIssue(revision=1, operation_id="2" * 32, description="Gold coverage", total_paise=7_500_000)
+        payment = PaymentEntry(revision=2, operation_id="3" * 32,
+                               payment={"date": "2026-11-24", "amount_paise": 2_000_000, "method": "cash"})
+        with patch("google.cloud.firestore.transactional", side_effect=lambda function: function):
+            issued = self.store.issue_invoice(record_id, invoice, self.actor.uid)
+            self.assertRegex(issued["invoice"]["number"], r"^INV-\d{4}-0001$")
+            self.assertEqual(self.store.issue_invoice(record_id, invoice, self.actor.uid), issued)
+            with self.assertRaises(StudioError) as conflict:
+                self.store.issue_invoice(record_id, invoice.model_copy(update={"revision": 2, "operation_id": "4" * 32}), self.actor.uid)
+            self.assertEqual(conflict.exception.status, 409)
+            paid = self.store.record_payment(record_id, payment, self.actor.uid)
+            self.assertEqual(self.store.record_payment(record_id, payment, self.actor.uid), paid)
+            self.assertEqual([item["amount_paise"] for item in paid["payments"]], [2_000_000])
+            update = ClientUpdate(name="Updated client", revision=3, payments=paid["payments"], quote_paise=8_000_000)
+            self.store.save_client(record_id, update, self.actor.uid)
+            self.assertEqual(self.store.read_client(record_id)["invoice"], issued["invoice"])
+            self.assertEqual(self.store.read_client(record_id)["name"], "Updated client")

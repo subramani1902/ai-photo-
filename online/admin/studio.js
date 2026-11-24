@@ -3,6 +3,7 @@ import { createHomepageManager } from "../homepage-admin.js";
 import { trustedPhotoApiOrigin } from "../studio-packages.mjs";
 import { createClientManager } from "./clients.js";
 import { createPackageManager } from "./packages.js";
+import { createBillingManager } from "./billing.js";
 
 const $ = selector => document.querySelector(selector);
 const client = createFirebaseClient({ context: "admin" });
@@ -38,6 +39,7 @@ async function request(path, options = {}) {
 const studioRequest = async (path, options) => (await request(studioPath + path, options)).json();
 const managers = {
   clients: createClientManager(studioRequest),
+  billing: createBillingManager(studioRequest),
   packages: createPackageManager(studioRequest),
   "homepage-manager": createHomepageManager((path, options) => request(homepagePath + path, options)),
 };

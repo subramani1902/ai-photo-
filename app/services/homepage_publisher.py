@@ -25,7 +25,7 @@ PUBLIC_FILES = (
     "vercel.json", "package.json", "find-photos.html", "homepage.css", "homepage.js", "homepage-content.mjs",
     "homepage-portfolio.json", "legacy-photo-route.js", "enquiry.mjs", "admin.html", "homepage-admin.js", "homepage-admin.css",
     "studio-packages.mjs", "studio-packages.json", "admin/index.html", "admin/studio.css", "admin/studio.js",
-    "admin/clients.js", "admin/packages.js", "admin/forms.js",
+    "admin/clients.js", "admin/packages.js", "admin/forms.js", "admin/billing.js",
 )
 SAMPLE_FILES = ("sample-bride.webp", "sample-wedding.webp", "sample-celebration.webp", "sample-together.webp", "credits.json")
 LOG = logging.getLogger(__name__)
